@@ -37,6 +37,10 @@ from schemas import AgentResult, NodeSpec
 # rather than cloning it. "No new gateway / no new client."
 from browser.client import V9Client
 
+# The named tool surface (#4). Every desktop action dispatches through this
+# registry instead of an inline if/elif, and the registry is enumerable.
+from .tools import ToolContext, front_and_maximize, run_tool, tool_names
+
 
 # ─── action vocabulary (coordinate-based; no element marks) ──────────────────
 # cua.Localhost has no accessibility tree, so the vision model addresses the
@@ -57,14 +61,25 @@ ACTION_SCHEMA: dict = {
                 "additionalProperties": False,
                 "required": ["type"],
                 "properties": {
+                    # Tool names mirror the registry in computer/tools.py, plus
+                    # the loop-level `done`. `tool_names()` is the source of truth.
                     "type": {
                         "type": "string",
                         "enum": ["click", "double_click", "right_click", "move",
-                                 "type", "key", "hotkey", "scroll",
-                                 "launch", "wait", "done"],
+                                 "drag", "scroll", "type", "key", "hotkey",
+                                 "launch", "kill_app", "bring_to_front",
+                                 "list_windows", "get_screen_size",
+                                 "get_cursor_position", "screenshot", "zoom",
+                                 "wait", "done"],
                     },
                     "x": {"type": "integer"},
                     "y": {"type": "integer"},
+                    "from_x": {"type": "integer"},
+                    "from_y": {"type": "integer"},
+                    "to_x": {"type": "integer"},
+                    "to_y": {"type": "integer"},
+                    "button": {"type": "string"},
+                    "title": {"type": "string"},
                     "value": {"type": "string"},
                     "keys": {"type": "array", "items": {"type": "string"}},
                     "dx": {"type": "integer"},
@@ -281,39 +296,10 @@ class ComputerSkill:
 
     # ── action dispatch ──────────────────────────────────────────────────────
     async def _dispatch(self, host, a: dict, scale_x: float, scale_y: float) -> str:
-        t = a.get("type", "")
-        if t in ("click", "double_click", "right_click", "move"):
-            x, y = self._scaled_xy(a, scale_x, scale_y)
-            if x is None:
-                return f"error: {t} needs x,y"
-            fn = {"click": host.mouse.click, "double_click": host.mouse.double_click,
-                  "right_click": host.mouse.right_click, "move": host.mouse.move}[t]
-            await fn(x, y)
-            return "ok"
-        if t == "type":
-            await host.keyboard.type(str(a.get("value", "")))
-            return "ok"
-        if t == "key":
-            await host.keyboard.keypress(str(a.get("value", "Enter")))
-            return "ok"
-        if t == "hotkey":
-            keys = a.get("keys") or []
-            if not keys:
-                return "error: hotkey needs keys"
-            await host.keyboard.keypress([str(k) for k in keys])
-            return "ok"
-        if t == "scroll":
-            x, y = self._scaled_xy(a, scale_x, scale_y, default_center=True)
-            await host.mouse.scroll(x, y, int(a.get("dx", 0)), int(a.get("dy", 3)))
-            return "ok"
-        if t == "launch":
-            await self._launch(host, str(a.get("app", "")))
-            await asyncio.sleep(1.0)
-            return "ok"
-        if t == "wait":
-            await asyncio.sleep(float(a.get("seconds", 0.5)))
-            return "ok"
-        return f"error: unknown action {t!r}"
+        """Execute one action through the named tool registry (computer/tools.py).
+        The action's `type` is the tool name; the action dict is its arguments."""
+        return await run_tool(a.get("type", ""), a,
+                              ToolContext(host, scale_x, scale_y))
 
     async def _run_deterministic(self, host, det_actions) -> list[dict]:
         steps: list[dict] = []
@@ -338,39 +324,10 @@ class ComputerSkill:
         await host.shell.run(f'start "" {app}', timeout=15)
 
     async def _front_and_maximize(self, title_hint: str) -> str:
-        """Bring every window matching `title_hint` to the front and maximize it,
-        via the synchronous `cua_auto` backend (the localhost wrapper exposes no
-        activate/maximize). Run in a thread so the async loop is not blocked.
-        `activate_window` often returns False under Windows' foreground-lock,
-        but `maximize_window` still raises the window to the top — verified."""
-        def _do() -> str:
-            try:
-                import cua_auto
-            except Exception as e:                            # noqa: BLE001
-                return f"cua_auto unavailable: {e}"
-            try:
-                handles = cua_auto.window.get_windows_with_title(title_hint) or []
-            except Exception as e:                            # noqa: BLE001
-                return f"get_windows_with_title failed: {e}"
-            if not handles:
-                return f"no window matched {title_hint!r}"
-            import time as _t
-            activated = maximized = 0
-            # Two passes: the first realizes/raises the window, the second
-            # makes the maximize stick once it is actually foregrounded.
-            for _pass in range(2):
-                for h in handles:
-                    try:
-                        if cua_auto.window.activate_window(h):
-                            activated += 1
-                        if cua_auto.window.maximize_window(h):
-                            maximized += 1
-                    except Exception:                         # noqa: BLE001
-                        pass
-                _t.sleep(0.4)
-            return (f"front+maximize {title_hint!r}: "
-                    f"{len(handles)} window(s), activated={activated}, maximized={maximized}")
-        return await asyncio.to_thread(_do)
+        # Delegates to the shared helper, which also backs the bring_to_front
+        # tool — single implementation for the activate/maximize the localhost
+        # wrapper omits (cua_auto fallback).
+        return await front_and_maximize(title_hint)
 
     async def _screenshot(self, host):
         b64 = await host.screen.screenshot_base64()
@@ -392,15 +349,6 @@ class ComputerSkill:
             return sx, sy
         except Exception:                                     # noqa: BLE001
             return 1.0, 1.0
-
-    @staticmethod
-    def _scaled_xy(a: dict, scale_x: float, scale_y: float, *, default_center=False):
-        x, y = a.get("x"), a.get("y")
-        if x is None or y is None:
-            if default_center:
-                return 0, 0
-            return None, None
-        return int(round(x * scale_x)), int(round(y * scale_y))
 
     async def _safe_title(self, host) -> str | None:
         try:
