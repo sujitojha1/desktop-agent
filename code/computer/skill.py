@@ -178,7 +178,15 @@ class ComputerSkill:
         # `finally` guarantee disconnect even on a mid-run exception.
         host = await cua.Localhost.connect()
         prelude: list[dict] = []
+        launched_pids: list[int] = []
         try:
+            # Track PIDs before launching to identify the new process
+            pids_before = set()
+            try:
+                pids_before = {w["pid"] for w in await enumerate_windows(host) if w.get("pid")}
+            except Exception:
+                pass
+
             # ── Layer 1: deterministic ──────────────────────────────────────
             if app:
                 await self._launch(host, app)
@@ -186,6 +194,17 @@ class ComputerSkill:
                 # to find + maximize it; a 1 s wait was too short and the
                 # maximize landed on a not-yet-visible window.
                 await asyncio.sleep(2.0)
+
+                # Identify new process PIDs
+                try:
+                    pids_after = await enumerate_windows(host)
+                    for w in pids_after:
+                        pid = w.get("pid")
+                        if pid and pid not in pids_before:
+                            launched_pids.append(pid)
+                except Exception:
+                    pass
+
                 # Front-and-maximize the launched window so perception sees a
                 # clean, full-screen target instead of one small window buried
                 # in desktop clutter. cua.Localhost.window can only read the
@@ -198,6 +217,15 @@ class ComputerSkill:
                                     "actions": [{"type": "front_maximize", "value": title_hint}],
                                     "outcome": outcome})
                     await asyncio.sleep(0.6)
+                    # If launched_pids is still empty, try to match by title_hint
+                    if not launched_pids:
+                        try:
+                            matching_wins = await enumerate_windows(host, title_hint)
+                            for w in matching_wins:
+                                if w.get("pid"):
+                                    launched_pids.append(w["pid"])
+                        except Exception:
+                            pass
             if det_actions:
                 steps = prelude + await self._run_deterministic(host, det_actions)
                 final_title = await self._safe_title(host)
@@ -219,6 +247,14 @@ class ComputerSkill:
             return self._pack_error(goal, f"computer skill error: {type(e).__name__}: {e}",
                                     elapsed=time.time() - t0)
         finally:
+            if launched_pids:
+                for pid in launched_pids:
+                    try:
+                        # Close the window gracefully by sending a main window close request
+                        cmd = f"powershell -NoProfile -Command \"$p = Get-Process -Id {pid} -ErrorAction SilentlyContinue; if ($p) {{ $p.CloseMainWindow() }}\""
+                        await host.shell.run(cmd, timeout=10)
+                    except Exception:
+                        pass
             try:
                 await host.disconnect()
             except Exception:                                 # noqa: BLE001
