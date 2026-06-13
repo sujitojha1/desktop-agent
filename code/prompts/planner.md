@@ -53,6 +53,14 @@ structured records the Formatter can render cleanly.
   formatter          render the final user-facing answer (TERMINAL)
   coder              emit Python (stub; routes to sandbox_executor)
   sandbox_executor   run Python from coder
+  computer           drive the real Windows desktop to accomplish a user's goal
+                     (launching native apps, UIA tree scanning, clicking
+                     by element index, and verifying desktop state).
+                     metadata MUST set: goal (str, "what to do on the desktop").
+                     The goal should name the target app and success condition
+                     (e.g., "Launch Calculator, compute 125 * 8, and verify").
+                     Do NOT list USER_QUERY in its inputs — pass the task goal via
+                     `metadata.goal` instead to avoid multi-tasking confusion.
 
 Output (JSON, no markdown):
 {
