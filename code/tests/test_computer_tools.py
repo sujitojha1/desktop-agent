@@ -13,7 +13,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from computer.tools import ToolContext, list_tools, run_tool, tool_names
+from computer.tools import (
+    ToolContext,
+    enumerate_windows,
+    list_tools,
+    run_tool,
+    tool_names,
+)
 
 
 # Tools the registry must expose (the ✅/⚠️ rows of the #3 coverage table).
@@ -83,3 +89,49 @@ def test_missing_coords_is_validation_error_not_crash():
     ctx = ToolContext(host=_Recorder())
     out = asyncio.run(run_tool("click", {}, ctx))
     assert out.startswith("error: click needs x,y")
+
+
+# ── list_windows via shell.run JSON (issue #5) ───────────────────────────────
+class _ShellHost:
+    """Fake host whose shell.run returns canned PowerShell stdout — no desktop."""
+    def __init__(self, stdout: str):
+        self._stdout = stdout
+
+    @property
+    def shell(self):
+        outer = self
+
+        class _Shell:
+            async def run(self, command, timeout=20, background=False):
+                return type("R", (), {"stdout": outer._stdout, "stderr": "",
+                                      "returncode": 0, "success": True})()
+        return _Shell()
+
+
+_TWO = '[{"Id":1,"MainWindowTitle":"Calculator"},{"Id":2,"MainWindowTitle":"VS Code"}]'
+
+
+def test_list_windows_parses_array():
+    wins = asyncio.run(enumerate_windows(_ShellHost(_TWO)))
+    assert wins == [{"pid": 1, "title": "Calculator"},
+                    {"pid": 2, "title": "VS Code"}]
+
+
+def test_list_windows_single_object_normalised_to_list():
+    # PowerShell emits a bare object (not an array) for a single match.
+    wins = asyncio.run(enumerate_windows(_ShellHost('{"Id":7,"MainWindowTitle":"Calculator"}')))
+    assert wins == [{"pid": 7, "title": "Calculator"}]
+
+
+def test_list_windows_empty_output():
+    assert asyncio.run(enumerate_windows(_ShellHost(""))) == []
+
+
+def test_list_windows_title_filter_is_case_insensitive():
+    wins = asyncio.run(enumerate_windows(_ShellHost(_TWO), "calc"))
+    assert wins == [{"pid": 1, "title": "Calculator"}]
+
+
+def test_list_windows_tool_dispatch_reports_count():
+    out = asyncio.run(run_tool("list_windows", {}, ToolContext(host=_ShellHost(_TWO))))
+    assert out.startswith("ok: 2 window(s)") and "Calculator" in out

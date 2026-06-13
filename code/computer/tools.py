@@ -43,6 +43,7 @@ Coverage vs cua-driver's 34 tools (verified 2026-06-14, Windows 11):
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
@@ -242,15 +243,45 @@ async def _bring_to_front(ctx, a):
     return await front_and_maximize(str(a.get("title", "") or a.get("value", "")))
 
 
+def _parse_ps_json(stdout: str) -> list[dict]:
+    """PowerShell `ConvertTo-Json` emits a bare object for one item, an array
+    for many, and empty/whitespace for none. Normalise all three to a list."""
+    s = (stdout or "").strip()
+    if not s:
+        return []
+    try:
+        data = json.loads(s)
+    except json.JSONDecodeError:
+        return []
+    if isinstance(data, dict):
+        return [data]
+    if isinstance(data, list):
+        return [d for d in data if isinstance(d, dict)]
+    return []
+
+
+async def enumerate_windows(host, title: str | None = None) -> list[dict]:
+    """All visible top-level windows as ``[{"pid": int, "title": str}]``, via
+    the SDK shell (`Get-Process`) — no win32 code, no new dependency. Optional
+    case-insensitive `title` substring filter. Windows-only (PowerShell); on
+    other platforms returns [] so the caller can branch."""
+    ps = ("Get-Process | Where-Object {$_.MainWindowTitle} | "
+          "Select-Object Id,MainWindowTitle | ConvertTo-Json -Compress")
+    res = await host.shell.run(f'powershell -NoProfile -Command "{ps}"', timeout=20)
+    rows = _parse_ps_json(getattr(res, "stdout", "") or "")
+    wins = [{"pid": r.get("Id"), "title": r.get("MainWindowTitle", "") or ""}
+            for r in rows]
+    if title:
+        t = title.lower()
+        wins = [w for w in wins if t in w["title"].lower()]
+    return wins
+
+
 async def _list_windows(ctx, a):
-    title = str(a.get("title", ""))
-
-    def _do():
-        import cua_auto
-        return cua_auto.window.get_windows_with_title(title) if title else []
-
-    handles = await asyncio.to_thread(_do)
-    return f"ok: {len(handles)} window(s) titled {title!r}: {handles}"
+    title = a.get("title") or None
+    wins = await enumerate_windows(ctx.host, title)
+    suffix = f" matching {title!r}" if title else ""
+    return f"ok: {len(wins)} window(s){suffix}: {json.dumps(wins)}"
 
 
 async def _get_screen_size(ctx, a):
@@ -320,8 +351,10 @@ _reg("kill_app", "Force-terminate an app by image name, e.g. 'CalculatorApp'.",
      _obj({"app": {"type": "string"}, "value": {"type": "string"}}), _kill_app)
 _reg("bring_to_front", "Activate + maximize every window whose title matches.",
      _obj({"title": {"type": "string"}, "value": {"type": "string"}}), _bring_to_front)
-_reg("list_windows", "List window handles whose title contains `title`.",
-     _obj({"title": {"type": "string"}}, ["title"]), _list_windows)
+_reg("list_windows",
+     "List all visible top-level windows (pid + title). Optional `title` "
+     "filters case-insensitively.",
+     _obj({"title": {"type": "string"}}), _list_windows)
 _reg("get_screen_size", "Return the logical screen size (w, h).", _obj({}), _get_screen_size)
 _reg("get_cursor_position", "Return the current cursor (x, y).", _obj({}), _get_cursor_position)
 _reg("screenshot", "Capture the screen (base64 PNG) — perception for the vision layer.",
