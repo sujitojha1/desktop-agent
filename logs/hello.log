@@ -1,0 +1,12 @@
+warning: `VIRTUAL_ENV=/Users/rohanshravan/.pyenv/versions/3.11.5` does not match the project environment path `.venv` and will be ignored; use `--active` to target the active environment instead
+
+══════════════════════════════════════════════════════════════════════════════
+session s8-1c33f71f  ─  query: hello
+══════════════════════════════════════════════════════════════════════════════
+[n:1] planner            complete (4.2s)
+[n:2] formatter          complete (3.7s)
+
+══════════════════════════════════════════════════════════════════════════════
+FINAL: Hello! How can I help you today?
+══════════════════════════════════════════════════════════════════════════════
+
