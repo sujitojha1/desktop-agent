@@ -136,6 +136,12 @@ computer:
     - computer_get_recording_state
     - computer_replay_trajectory
     - computer_install_ffmpeg
+    - computer_start_session
+    - computer_end_session
+    - computer_set_agent_cursor_enabled
+    - computer_set_agent_cursor_style
+    - computer_set_agent_cursor_motion
+    - computer_get_agent_cursor_state
   temperature: 0.0
   max_tokens: 1500
   description: |

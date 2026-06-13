@@ -571,6 +571,166 @@ _TOOL_CATALOG = {
             "required": [],
         },
     },
+    "computer_start_session": {
+        "name": "computer_start_session",
+        "description": "Declare a session — a named, color-coded identity for THIS agent run. Pass a stable `session` id; the agent cursor, per-session config, and recording all key on it, and it follows the run across any apps/windows. Concurrent runs/subagents each pass their own `session` to get their own cursor.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "session": {
+                    "type": "string",
+                    "description": "Stable session id for this run (e.g. \"research-run-1\")."
+                }
+            },
+            "required": ["session"]
+        }
+    },
+    "computer_end_session": {
+        "name": "computer_end_session",
+        "description": "End a session declared with `start_session`: removes its agent cursor, stops any recording it owns, and clears its per-session config.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "session": {
+                    "type": "string",
+                    "description": "The session id to end."
+                }
+            },
+            "required": ["session"]
+        }
+    },
+    "computer_set_agent_cursor_enabled": {
+        "name": "computer_set_agent_cursor_enabled",
+        "description": "Toggle the visual agent-cursor overlay. Disabling removes the overlay immediately.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "enabled": {
+                    "type": "boolean",
+                    "description": "True to show the overlay cursor; false to hide."
+                },
+                "cursor_id": {
+                    "type": "string",
+                    "description": "Rust-only: multi-cursor instance id. Default 'default'."
+                }
+            },
+            "required": ["enabled"]
+        }
+    },
+    "computer_set_agent_cursor_style": {
+        "name": "computer_set_agent_cursor_style",
+        "description": "Update the visual style of the agent cursor overlay. All parameters are optional.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "bloom_color": {
+                    "type": "string",
+                    "description": "Hex bloom/halo colour (e.g. '#00FFFF'). '' = revert to default."
+                },
+                "cursor_id": {
+                    "type": "string",
+                    "description": "Cursor instance. Default: 'default'."
+                },
+                "gradient_colors": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "CSS hex gradient stops tip to tail (e.g. ['#FF0000','#0000FF']). [] = revert to default."
+                },
+                "image_path": {
+                    "type": "string",
+                    "description": "Path to PNG/JPEG/SVG/ICO cursor image. '' = revert to arrow."
+                }
+              },
+              "required": []
+        }
+    },
+    "computer_set_agent_cursor_motion": {
+        "name": "computer_set_agent_cursor_motion",
+        "description": "Configure the visual appearance and motion curve of an agent cursor instance. All parameters are optional.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "cursor_id": {
+                    "type": "string",
+                    "description": "Cursor instance. Default: 'default'."
+                },
+                "cursor_icon": {
+                    "type": "string",
+                    "description": "Built-in ('arrow','crosshair','hand','dot') or PNG/SVG file path."
+                },
+                "cursor_color": {
+                    "type": "string",
+                    "description": "Hex color e.g. '#00FFFF' or CSS name."
+                },
+                "cursor_label": {
+                    "type": "string",
+                    "description": "Short text shown near the cursor."
+                },
+                "cursor_size": {
+                    "type": "number",
+                    "description": "Dot radius in points. Default 16."
+                },
+                "cursor_opacity": {
+                    "type": "number",
+                    "description": "0.0–1.0 (default 0.85)."
+                },
+                "arc_size": {
+                    "type": "number",
+                    "description": "Arc deflection as fraction of path length [0,1]. Default 0.25."
+                },
+                "arc_flow": {
+                    "type": "number",
+                    "description": "Asymmetry bias [-1,1]. Default 0.0."
+                },
+                "start_handle": {
+                    "type": "number",
+                    "description": "Start-handle fraction [0,1]. Default 0.3."
+                },
+                "end_handle": {
+                    "type": "number",
+                    "description": "End-handle fraction [0,1]. Default 0.3."
+                },
+                "spring": {
+                    "type": "number",
+                    "description": "Settle damping [0.3,1.0]. Default 0.72."
+                },
+                "glide_duration_ms": {
+                    "type": "number",
+                    "minimum": 50,
+                    "maximum": 5000,
+                    "description": "Fixed flight duration per move in ms; omit for speed-based timing (the default)."
+                },
+                "dwell_after_click_ms": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 5000,
+                    "description": "Pause after click ripple in ms. Default 80."
+                },
+                "idle_hide_ms": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 60000,
+                    "description": "Auto-hide delay in ms. 0=never. Default 20000."
+                },
+                "turn_radius": {
+                    "type": "number",
+                    "minimum": 1,
+                    "maximum": 1000,
+                    "description": "Minimum turning radius of the glide path in points; smaller = tighter curves. Default 80."
+                }
+            },
+            "required": []
+        }
+    },
+    "computer_get_agent_cursor_state": {
+        "name": "computer_get_agent_cursor_state",
+        "description": "Report the current agent-cursor configuration: enabled flag, motion knobs, glide duration, post-click dwell, and idle-hide delay. Pure read-only.",
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+            "required": []
+        }
+    },
 }
 
 

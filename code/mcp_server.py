@@ -689,5 +689,90 @@ def computer_install_ffmpeg(confirm: bool = False) -> dict:
     return _cua("install_ffmpeg", {"confirm": confirm})
 
 
+@mcp.tool()
+def computer_start_session(session: str) -> dict:
+    """ACT: Declare a session — a named, color-coded identity for THIS agent run. Example: computer_start_session("research-run-1")."""
+    return _cua("start_session", {"session": session})
+
+
+@mcp.tool()
+def computer_end_session(session: str) -> dict:
+    """ACT: End a session declared with start_session. Removes its agent cursor, stops any recording it owns, and clears its per-session config. Example: computer_end_session("research-run-1")."""
+    return _cua("end_session", {"session": session})
+
+
+@mcp.tool()
+def computer_set_agent_cursor_enabled(enabled: bool, cursor_id: str = "") -> dict:
+    """ACT: Toggle the visual agent-cursor overlay. True to show, false to hide. Example: computer_set_agent_cursor_enabled(True)."""
+    args: dict = {"enabled": enabled}
+    if cursor_id:
+        args["cursor_id"] = cursor_id
+    return _cua("set_agent_cursor_enabled", args)
+
+
+@mcp.tool()
+def computer_set_agent_cursor_style(bloom_color: str = "", cursor_id: str = "",
+                                    gradient_colors: list[str] | None = None,
+                                    image_path: str = "") -> dict:
+    """ACT: Update the visual style of the agent cursor overlay. Example: computer_set_agent_cursor_style(bloom_color="#00FFFF")."""
+    args: dict = {}
+    if bloom_color:
+        args["bloom_color"] = bloom_color
+    if cursor_id:
+        args["cursor_id"] = cursor_id
+    if gradient_colors is not None:
+        args["gradient_colors"] = gradient_colors
+    if image_path:
+        args["image_path"] = image_path
+    return _cua("set_agent_cursor_style", args)
+
+
+@mcp.tool()
+def computer_set_agent_cursor_motion(cursor_id: str = "", cursor_icon: str = "",
+                                     cursor_color: str = "", cursor_label: str = "",
+                                     cursor_size: float = -1.0, cursor_opacity: float = -1.0,
+                                     arc_size: float = -1.0, arc_flow: float = -999.0,
+                                     start_handle: float = -1.0, end_handle: float = -1.0,
+                                     spring: float = -1.0, glide_duration_ms: float = -1.0,
+                                     dwell_after_click_ms: float = -1.0, idle_hide_ms: float = -1.0,
+                                     turn_radius: float = -1.0) -> dict:
+    """ACT: Configure the visual appearance and motion curve of an agent cursor instance. Example: computer_set_agent_cursor_motion(cursor_label="Agent")."""
+    args: dict = {}
+    if cursor_id:
+        args["cursor_id"] = cursor_id
+    if cursor_icon:
+        args["cursor_icon"] = cursor_icon
+    if cursor_color:
+        args["cursor_color"] = cursor_color
+    if cursor_label:
+        args["cursor_label"] = cursor_label
+
+    for k, v in [
+        ("cursor_size", cursor_size),
+        ("cursor_opacity", cursor_opacity),
+        ("arc_size", arc_size),
+        ("start_handle", start_handle),
+        ("end_handle", end_handle),
+        ("spring", spring),
+        ("glide_duration_ms", glide_duration_ms),
+        ("dwell_after_click_ms", dwell_after_click_ms),
+        ("idle_hide_ms", idle_hide_ms),
+        ("turn_radius", turn_radius),
+    ]:
+        if v >= 0:
+            args[k] = v
+
+    if arc_flow != -999.0:
+        args["arc_flow"] = arc_flow
+
+    return _cua("set_agent_cursor_motion", args)
+
+
+@mcp.tool()
+def computer_get_agent_cursor_state() -> dict:
+    """Return the current agent-cursor configuration state. Example: computer_get_agent_cursor_state()."""
+    return _cua("get_agent_cursor_state")
+
+
 if __name__ == "__main__":
     mcp.run(transport="stdio")

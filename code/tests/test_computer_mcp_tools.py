@@ -211,3 +211,93 @@ def test_install_ffmpeg_builds_correct_call(monkeypatch):
     assert argv[:3] == ["cua-driver", "call", "install_ffmpeg"]
     args = json.loads(argv[3])
     assert args == {"confirm": True}
+
+
+def test_start_session_builds_correct_call(monkeypatch):
+    seen = _patch(monkeypatch, stdout="{}")
+    mcp_server.computer_start_session("session-abc")
+    argv = seen["argv"]
+    assert argv[:3] == ["cua-driver", "call", "start_session"]
+    assert json.loads(argv[3]) == {"session": "session-abc"}
+
+
+def test_end_session_builds_correct_call(monkeypatch):
+    seen = _patch(monkeypatch, stdout="{}")
+    mcp_server.computer_end_session("session-abc")
+    argv = seen["argv"]
+    assert argv[:3] == ["cua-driver", "call", "end_session"]
+    assert json.loads(argv[3]) == {"session": "session-abc"}
+
+
+def test_set_agent_cursor_enabled_builds_correct_call(monkeypatch):
+    seen = _patch(monkeypatch, stdout="{}")
+    mcp_server.computer_set_agent_cursor_enabled(True, cursor_id="custom-cursor")
+    argv = seen["argv"]
+    assert argv[:3] == ["cua-driver", "call", "set_agent_cursor_enabled"]
+    assert json.loads(argv[3]) == {"enabled": True, "cursor_id": "custom-cursor"}
+
+
+def test_set_agent_cursor_style_builds_correct_call(monkeypatch):
+    seen = _patch(monkeypatch, stdout="{}")
+    mcp_server.computer_set_agent_cursor_style(
+        bloom_color="#00FFFF",
+        cursor_id="cursor-1",
+        gradient_colors=["#FF0000", "#0000FF"],
+        image_path="/path/to/icon.png"
+    )
+    argv = seen["argv"]
+    assert argv[:3] == ["cua-driver", "call", "set_agent_cursor_style"]
+    assert json.loads(argv[3]) == {
+        "bloom_color": "#00FFFF",
+        "cursor_id": "cursor-1",
+        "gradient_colors": ["#FF0000", "#0000FF"],
+        "image_path": "/path/to/icon.png"
+    }
+
+
+def test_set_agent_cursor_motion_builds_correct_call(monkeypatch):
+    seen = _patch(monkeypatch, stdout="{}")
+    mcp_server.computer_set_agent_cursor_motion(
+        cursor_id="cursor-1",
+        cursor_icon="crosshair",
+        cursor_color="#FF00FF",
+        cursor_label="agent-1",
+        cursor_size=20.0,
+        cursor_opacity=0.9,
+        arc_size=0.5,
+        arc_flow=0.2,
+        start_handle=0.4,
+        end_handle=0.4,
+        spring=0.8,
+        glide_duration_ms=150.0,
+        dwell_after_click_ms=100.0,
+        idle_hide_ms=5000.0,
+        turn_radius=90.0
+    )
+    argv = seen["argv"]
+    assert argv[:3] == ["cua-driver", "call", "set_agent_cursor_motion"]
+    assert json.loads(argv[3]) == {
+        "cursor_id": "cursor-1",
+        "cursor_icon": "crosshair",
+        "cursor_color": "#FF00FF",
+        "cursor_label": "agent-1",
+        "cursor_size": 20.0,
+        "cursor_opacity": 0.9,
+        "arc_size": 0.5,
+        "arc_flow": 0.2,
+        "start_handle": 0.4,
+        "end_handle": 0.4,
+        "spring": 0.8,
+        "glide_duration_ms": 150.0,
+        "dwell_after_click_ms": 100.0,
+        "idle_hide_ms": 5000.0,
+        "turn_radius": 90.0
+    }
+
+
+def test_get_agent_cursor_state_builds_correct_call(monkeypatch):
+    seen = _patch(monkeypatch, stdout="{}")
+    mcp_server.computer_get_agent_cursor_state()
+    argv = seen["argv"]
+    assert argv[:3] == ["cua-driver", "call", "get_agent_cursor_state"]
+    assert json.loads(argv[3]) == {}
