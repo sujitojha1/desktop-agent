@@ -99,3 +99,21 @@ browser:
     chosen layer surfaced as output.path. Use when Researcher's
     fetch_url is insufficient: JavaScript-rendered content, interactive
     widgets, multi-page workflows.
+
+computer:
+  prompt: prompts/computer.md
+  # Like Browser, the Computer skill does not go through the standard
+  # LLM-call dispatch. It owns its own cascade (deterministic launch →
+  # vision loop) over the real desktop via cua.Localhost, routing each
+  # vision call through the V9 gateway internally. temperature / max_tokens
+  # are kept here for registry uniformity but the dispatcher ignores them.
+  temperature: 0.0
+  max_tokens: 1024
+  description: |
+    Drives the real desktop through cua.Localhost (direct host control,
+    no VM). Cascade: deterministic (launch app + scripted steps) → vision
+    (screenshot → V9 /v1/vision → coordinate clicks). Inputs in metadata:
+    goal (required), app (optional launch target), actions (optional
+    deterministic steps), max_steps (optional). Returns ComputerOutput
+    with the chosen layer surfaced as output.path. Use for native desktop
+    apps and system dialogs that Browser's URL cascade cannot reach.
