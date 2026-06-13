@@ -131,6 +131,11 @@ computer:
     - computer_debug_window_info
     - computer_zoom
     - computer_page
+    - computer_start_recording
+    - computer_stop_recording
+    - computer_get_recording_state
+    - computer_replay_trajectory
+    - computer_install_ffmpeg
   temperature: 0.0
   max_tokens: 1500
   description: |

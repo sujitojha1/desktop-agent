@@ -525,6 +525,52 @@ _TOOL_CATALOG = {
             "required": ["action"],
         },
     },
+    "computer_start_recording": {
+        "name": "computer_start_recording",
+        "description": "Start trajectory recording to the specified directory.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "output_dir": {"type": "string"},
+                "record_video": {"type": "boolean", "default": False},
+            },
+            "required": ["output_dir"],
+        },
+    },
+    "computer_stop_recording": {
+        "name": "computer_stop_recording",
+        "description": "Stop trajectory recording.",
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    "computer_get_recording_state": {
+        "name": "computer_get_recording_state",
+        "description": "Report the current trajectory recorder state.",
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    "computer_replay_trajectory": {
+        "name": "computer_replay_trajectory",
+        "description": "Replay a recorded trajectory by re-invoking every turn's tool call in order.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "dir": {"type": "string"},
+                "delay_ms": {"type": "integer", "default": 500},
+                "stop_on_error": {"type": "boolean", "default": True},
+            },
+            "required": ["dir"],
+        },
+    },
+    "computer_install_ffmpeg": {
+        "name": "computer_install_ffmpeg",
+        "description": "Install the ffmpeg binary used by start_recording's video capture (Windows/Linux only).",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "confirm": {"type": "boolean", "default": False},
+            },
+            "required": [],
+        },
+    },
 }
 
 

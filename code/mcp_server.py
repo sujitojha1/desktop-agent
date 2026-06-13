@@ -659,5 +659,35 @@ def computer_page(action: str, pid: int = 0, window_id: int = 0,
     return _cua("page", args)
 
 
+@mcp.tool()
+def computer_start_recording(output_dir: str, record_video: bool = False) -> dict:
+    """ACT: start trajectory recording. Every subsequent action-tool invocation writes a turn folder under output_dir. Example: computer_start_recording(output_dir="/tmp/run1")."""
+    return _cua("start_recording", {"output_dir": output_dir, "record_video": record_video})
+
+
+@mcp.tool()
+def computer_stop_recording() -> dict:
+    """ACT: stop trajectory recording and finalize the mp4 if video was enabled. Example: computer_stop_recording()."""
+    return _cua("stop_recording")
+
+
+@mcp.tool()
+def computer_get_recording_state() -> dict:
+    """Return the current trajectory recorder state: whether recording is enabled, the output directory, and the counters. Example: computer_get_recording_state()."""
+    return _cua("get_recording_state")
+
+
+@mcp.tool()
+def computer_replay_trajectory(dir: str, delay_ms: int = 500, stop_on_error: bool = True) -> dict:
+    """ACT: replay a recorded trajectory by re-invoking every turn's tool call in lexical order. Example: computer_replay_trajectory(dir="/tmp/run1")."""
+    return _cua("replay_trajectory", {"dir": dir, "delay_ms": delay_ms, "stop_on_error": stop_on_error})
+
+
+@mcp.tool()
+def computer_install_ffmpeg(confirm: bool = False) -> dict:
+    """ACT: install the ffmpeg binary used by start_recording's video capture (Windows/Linux only). Example: computer_install_ffmpeg(confirm=True)."""
+    return _cua("install_ffmpeg", {"confirm": confirm})
+
+
 if __name__ == "__main__":
     mcp.run(transport="stdio")

@@ -166,3 +166,48 @@ def test_page_builds_correct_call(monkeypatch):
     args = json.loads(argv[3])
     assert args == {"action": "get_text", "pid": 34384}
     assert out == {"ok": True}
+
+
+def test_start_recording_builds_correct_call(monkeypatch):
+    seen = _patch(monkeypatch, stdout="{}")
+    mcp_server.computer_start_recording(output_dir="/tmp/run1", record_video=True)
+    argv = seen["argv"]
+    assert argv[:3] == ["cua-driver", "call", "start_recording"]
+    args = json.loads(argv[3])
+    assert args == {"output_dir": "/tmp/run1", "record_video": True}
+
+
+def test_stop_recording_builds_correct_call(monkeypatch):
+    seen = _patch(monkeypatch, stdout="{}")
+    mcp_server.computer_stop_recording()
+    argv = seen["argv"]
+    assert argv[:3] == ["cua-driver", "call", "stop_recording"]
+    args = json.loads(argv[3])
+    assert args == {}
+
+
+def test_get_recording_state_builds_correct_call(monkeypatch):
+    seen = _patch(monkeypatch, stdout="{}")
+    mcp_server.computer_get_recording_state()
+    argv = seen["argv"]
+    assert argv[:3] == ["cua-driver", "call", "get_recording_state"]
+    args = json.loads(argv[3])
+    assert args == {}
+
+
+def test_replay_trajectory_builds_correct_call(monkeypatch):
+    seen = _patch(monkeypatch, stdout="{}")
+    mcp_server.computer_replay_trajectory(dir="/tmp/run1", delay_ms=200, stop_on_error=False)
+    argv = seen["argv"]
+    assert argv[:3] == ["cua-driver", "call", "replay_trajectory"]
+    args = json.loads(argv[3])
+    assert args == {"dir": "/tmp/run1", "delay_ms": 200, "stop_on_error": False}
+
+
+def test_install_ffmpeg_builds_correct_call(monkeypatch):
+    seen = _patch(monkeypatch, stdout="{}")
+    mcp_server.computer_install_ffmpeg(confirm=True)
+    argv = seen["argv"]
+    assert argv[:3] == ["cua-driver", "call", "install_ffmpeg"]
+    args = json.loads(argv[3])
+    assert args == {"confirm": True}
