@@ -39,6 +39,8 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent))
 import artifacts as _artifacts  # noqa: E402
 import memory as _memory  # noqa: E402
+from computer.backend import CuaBackend
+_backend = CuaBackend.shared()
 
 MAX_SEARCH_RESULTS = 5  # hard cap — Tavily prices per result
 
@@ -402,58 +404,7 @@ def search_knowledge(query: str, k: int = 5) -> list[dict]:
 # │ ComputerSkill → here) so every tool call is attributable.              │
 # └─────────────────────────────────────────────────────────────────────────┘
 import asyncio as _aio
-import shutil
-import subprocess
-
-CUA_DRIVER_BIN = os.environ.get("CUA_DRIVER_BIN", "cua-driver")
-
-# ── SDK connection pool (lazy singleton) ──────────────────────────────────────
-_sdk_host = None           # cua.Localhost connection — created on first need
-_sdk_session_id = None     # active session from the orchestrator
-
-
-async def _ensure_sdk():
-    """Return the shared cua.Localhost connection, creating it on first use."""
-    global _sdk_host
-    if _sdk_host is None:
-        import cua
-        _sdk_host = await cua.Localhost.connect()
-    return _sdk_host
-
-
-async def _disconnect_sdk():
-    """Tear down the shared SDK connection."""
-    global _sdk_host
-    if _sdk_host is not None:
-        try:
-            await _sdk_host.disconnect()
-        except Exception:  # noqa: BLE001
-            pass
-        _sdk_host = None
-
-
-# ── daemon subprocess fallback ────────────────────────────────────────────────
-def _cua(tool: str, args: dict | None = None) -> dict:
-    """Invoke one cua-driver tool through the running daemon and return its
-    parsed JSON. On failure returns {"error": ...} rather than raising, so the
-    model sees the message and can recover (re-scan, pick a different element)."""
-    exe = shutil.which(CUA_DRIVER_BIN) or CUA_DRIVER_BIN
-    try:
-        proc = subprocess.run(
-            [exe, "call", tool, json.dumps(args or {})],
-            capture_output=True, text=True, timeout=60,
-        )
-    except Exception as e:  # noqa: BLE001
-        return {"error": f"cua-driver {tool} failed to spawn: {type(e).__name__}: {e}"}
-    if proc.returncode != 0:
-        return {"error": (proc.stderr or proc.stdout or "non-zero exit").strip()}
-    out = (proc.stdout or "").strip()
-    if not out:
-        return {"ok": True}
-    try:
-        return json.loads(out)
-    except json.JSONDecodeError:
-        return {"raw": out}
+# The local daemon helper and SDK connection are now managed by _backend in computer/backend.py.
 
 
 @mcp.tool()
