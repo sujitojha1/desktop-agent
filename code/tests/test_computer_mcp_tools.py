@@ -156,3 +156,13 @@ def test_zoom_builds_correct_call(monkeypatch):
     mcp_server.computer_zoom(34384, 3342692, 10.0, 10.0, 100.0, 100.0)
     args = json.loads(seen["argv"][3])
     assert args == {"pid": 34384, "window_id": 3342692, "x1": 10.0, "y1": 10.0, "x2": 100.0, "y2": 100.0}
+
+
+def test_page_builds_correct_call(monkeypatch):
+    seen = _patch(monkeypatch, stdout=json.dumps({"ok": True}))
+    out = mcp_server.computer_page(action="get_text", pid=34384)
+    argv = seen["argv"]
+    assert argv[:3] == ["cua-driver", "call", "page"]
+    args = json.loads(argv[3])
+    assert args == {"action": "get_text", "pid": 34384}
+    assert out == {"ok": True}

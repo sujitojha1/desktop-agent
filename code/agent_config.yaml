@@ -130,6 +130,7 @@ computer:
     - computer_kill_app
     - computer_debug_window_info
     - computer_zoom
+    - computer_page
   temperature: 0.0
   max_tokens: 1500
   description: |

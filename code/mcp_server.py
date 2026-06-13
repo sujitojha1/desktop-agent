@@ -633,5 +633,31 @@ def computer_zoom(pid: int, window_id: int, x1: float, y1: float, x2: float, y2:
     return _cua("zoom", {"pid": pid, "window_id": window_id, "x1": x1, "y1": y1, "x2": x2, "y2": y2})
 
 
+@mcp.tool()
+def computer_page(action: str, pid: int = 0, window_id: int = 0,
+                  selector: str = "", css_selector: str = "",
+                  javascript: str = "", attributes: list[str] | None = None,
+                  bundle_id: str = "", user_has_confirmed_enabling: bool = False) -> dict:
+    """ACT/PERCEPTION: Interact with the browser page DOM loaded in a running app (CDP/WebKit). Example: computer_page(action="get_text", pid=34384)."""
+    args: dict = {"action": action}
+    if pid:
+        args["pid"] = pid
+    if window_id:
+        args["window_id"] = window_id
+    if selector:
+        args["selector"] = selector
+    if css_selector:
+        args["css_selector"] = css_selector
+    if javascript:
+        args["javascript"] = javascript
+    if attributes:
+        args["attributes"] = attributes
+    if bundle_id:
+        args["bundle_id"] = bundle_id
+    if user_has_confirmed_enabling:
+        args["user_has_confirmed_enabling"] = user_has_confirmed_enabling
+    return _cua("page", args)
+
+
 if __name__ == "__main__":
     mcp.run(transport="stdio")

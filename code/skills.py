@@ -497,6 +497,34 @@ _TOOL_CATALOG = {
             "required": ["pid", "window_id", "x1", "y1", "x2", "y2"],
         },
     },
+    "computer_page": {
+        "name": "computer_page",
+        "description": "Interact with the browser page DOM loaded in a running app (CDP/WebKit).",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": [
+                        "execute_javascript",
+                        "get_text",
+                        "query_dom",
+                        "click_element",
+                        "enable_javascript_apple_events"
+                    ],
+                },
+                "pid": {"type": "integer", "default": 0},
+                "window_id": {"type": "integer", "default": 0},
+                "selector": {"type": "string", "default": ""},
+                "css_selector": {"type": "string", "default": ""},
+                "javascript": {"type": "string", "default": ""},
+                "attributes": {"type": "array", "items": {"type": "string"}},
+                "bundle_id": {"type": "string", "default": ""},
+                "user_has_confirmed_enabling": {"type": "boolean", "default": False},
+            },
+            "required": ["action"],
+        },
+    },
 }
 
 
