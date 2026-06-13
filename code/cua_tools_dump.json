@@ -1,0 +1,37 @@
+﻿bring_to_front: Activate `pid`'s window (or `window_id` if specified) -- bring it to the OS foreground
+check_for_update: Check whether a newer cua-driver-rs release is available on GitHub
+check_permissions: Check required permissions for cua-driver-rs on Windows
+click: Left-click against a target pid
+debug_window_info: Diagnostic: dump everything cua-driver sees about a pid's top-level windows from the daemon's session perspective
+double_click: Double-click against a target pid
+drag: Press-drag-release gesture from (from_x, from_y) to (to_x, to_y) in window-local screenshot pixels
+end_session: End a session declared with `start_session`: removes its agent cursor, stops any recording it owns, and clears its per-session config
+get_accessibility_tree: Return a lightweight snapshot of the desktop: running processes and on-screen visible windows with their bounds and owner pid
+get_agent_cursor_state: Report the current agent-cursor configuration: enabled flag, motion knobs (startHandle, endHandle, arcSize, arcFlow, spring), glide duration, post-click dwell, and idle-hide delay
+get_config: Report the current persistent driver config
+get_cursor_position: Return the current mouse cursor position in screen points (origin top-left)
+get_recording_state: Report the current trajectory recorder state: whether recording is enabled, the output directory (when enabled), and the 1-based counter for the next turn folder that will be written
+get_screen_size: Return the logical size of the main display in points plus its backing scale factor
+get_window_state: Walk a running app's UIA tree and return a Markdown rendering of its UI, tagging every actionable element with [element_index N]
+hotkey: Press a combination of keys simultaneously ΓÇö e.g
+install_ffmpeg: Install the ffmpeg binary used by start_recording's video capture (Linux/Windows; macOS records natively and needs no ffmpeg)
+kill_app: Force-terminate a process by pid
+launch_app: Launch a Windows app hidden ΓÇö the driver never brings the target to the foreground, the target's window is launched with SW_SHOWNOACTIVATE so it does not steal focus from whatever is currently frontmost
+list_apps: List Windows apps ΓÇö both currently running and installed-but-not-running ΓÇö with per-app state flags:
+list_windows: List every top-level window currently known to the window manager
+move_cursor: Move the agent cursor overlay to (x, y)
+page: Interact with the browser page loaded in a running app
+press_key: Press and release a single key, delivered directly to the target pid's top-level window via PostMessage(WM_KEYDOWN/WM_KEYUP)
+replay_trajectory: Replay a recorded trajectory by re-invoking every turn's tool call in lexical order
+right_click: Right-click against a target pid
+scroll: Scroll the target pid's focused region
+set_agent_cursor_enabled: Toggle the visual agent-cursor overlay
+set_agent_cursor_motion: Configure the visual appearance and motion curve of an agent cursor instance
+set_agent_cursor_style: Update the visual style of the agent cursor overlay
+set_config: Write a setting into the persistent driver config
+set_value: Set a value on a UIA element via the ValuePattern interface
+start_recording: Start trajectory recording
+start_session: Declare a session ΓÇö a named, color-coded identity for THIS agent run
+stop_recording: Stop trajectory recording
+type_text: Insert text into the target pid via character-by-character PostMessage(WM_CHAR) to the focused window
+zoom: Zoom into a rectangular region of a window screenshot at full (native) resolution
