@@ -301,3 +301,53 @@ def test_get_agent_cursor_state_builds_correct_call(monkeypatch):
     argv = seen["argv"]
     assert argv[:3] == ["cua-driver", "call", "get_agent_cursor_state"]
     assert json.loads(argv[3]) == {}
+
+
+def test_get_config_builds_correct_call(monkeypatch):
+    seen = _patch(monkeypatch, stdout="{}")
+    mcp_server.computer_get_config()
+    argv = seen["argv"]
+    assert argv[:3] == ["cua-driver", "call", "get_config"]
+    assert json.loads(argv[3]) == {}
+
+
+def test_set_config_builds_correct_call(monkeypatch):
+    # Test Swift-style key/value write
+    seen = _patch(monkeypatch, stdout="{}")
+    mcp_server.computer_set_config(key="capture_mode", value="som")
+    argv = seen["argv"]
+    assert argv[:3] == ["cua-driver", "call", "set_config"]
+    assert json.loads(argv[3]) == {"key": "capture_mode", "value": "som"}
+
+    # Test legacy per-field writes
+    seen = _patch(monkeypatch, stdout="{}")
+    mcp_server.computer_set_config(
+        capture_mode="vision",
+        max_image_dimension=1024,
+        experimental_pip=True,
+        experimental_pip_geometry="480x360"
+    )
+    argv = seen["argv"]
+    assert argv[:3] == ["cua-driver", "call", "set_config"]
+    assert json.loads(argv[3]) == {
+        "capture_mode": "vision",
+        "max_image_dimension": 1024,
+        "experimental_pip": True,
+        "experimental_pip_geometry": "480x360"
+    }
+
+
+def test_check_permissions_builds_correct_call(monkeypatch):
+    seen = _patch(monkeypatch, stdout="{}")
+    mcp_server.computer_check_permissions()
+    argv = seen["argv"]
+    assert argv[:3] == ["cua-driver", "call", "check_permissions"]
+    assert json.loads(argv[3]) == {}
+
+
+def test_check_for_update_builds_correct_call(monkeypatch):
+    seen = _patch(monkeypatch, stdout="{}")
+    mcp_server.computer_check_for_update()
+    argv = seen["argv"]
+    assert argv[:3] == ["cua-driver", "call", "check_for_update"]
+    assert json.loads(argv[3]) == {}

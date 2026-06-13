@@ -142,6 +142,10 @@ computer:
     - computer_set_agent_cursor_style
     - computer_set_agent_cursor_motion
     - computer_get_agent_cursor_state
+    - computer_get_config
+    - computer_set_config
+    - computer_check_permissions
+    - computer_check_for_update
   temperature: 0.0
   max_tokens: 1500
   description: |

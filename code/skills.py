@@ -731,6 +731,67 @@ _TOOL_CATALOG = {
             "required": []
         }
     },
+    "computer_get_config": {
+        "name": "computer_get_config",
+        "description": "Report the current persistent driver config. Pure read-only. Returns defaults when the underlying state is unset.",
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+            "required": []
+        }
+    },
+    "computer_set_config": {
+        "name": "computer_set_config",
+        "description": "Write a setting into the persistent driver config. Values take effect immediately. Supports both Swift-compatible dotted paths (key/value) and legacy per-field writes.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "key": {
+                    "type": "string",
+                    "description": "Dotted snake_case path to a leaf config field (Swift-compatible shape). Pair with `value`."
+                },
+                "value": {
+                    "description": "New value for `key`. JSON type depends on the key."
+                },
+                "capture_mode": {
+                    "type": "string",
+                    "enum": ["som", "vision", "ax"],
+                    "description": "Legacy per-field shape."
+                },
+                "max_image_dimension": {
+                    "type": "integer",
+                    "description": "Legacy per-field shape."
+                },
+                "experimental_pip": {
+                    "type": "boolean",
+                    "description": "Legacy per-field shape. Enables PiP preview (applies next restart)."
+                },
+                "experimental_pip_geometry": {
+                    "type": "string",
+                    "description": "Legacy per-field shape. PiP window size + optional position (WxH or WxH+X+Y)."
+                }
+            },
+            "required": []
+        }
+    },
+    "computer_check_permissions": {
+        "name": "computer_check_permissions",
+        "description": "Check required permissions for cua-driver-rs on Windows.",
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+            "required": []
+        }
+    },
+    "computer_check_for_update": {
+        "name": "computer_check_for_update",
+        "description": "Check whether a newer cua-driver-rs release is available on GitHub. Returns the current and latest versions, an `update_available` boolean, the install one-liner, and the release notes URL. Read-only.",
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+            "required": []
+        }
+    },
 }
 
 

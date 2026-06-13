@@ -774,5 +774,45 @@ def computer_get_agent_cursor_state() -> dict:
     return _cua("get_agent_cursor_state")
 
 
+@mcp.tool()
+def computer_get_config() -> dict:
+    """Return the current persistent driver configuration. Example: computer_get_config()."""
+    return _cua("get_config")
+
+
+@mcp.tool()
+def computer_set_config(key: str = "", value: str | int | bool | None = None,
+                        capture_mode: str = "", max_image_dimension: int = -1,
+                        experimental_pip: bool | None = None,
+                        experimental_pip_geometry: str = "") -> dict:
+    """ACT: Write a setting into the persistent driver config. Example: computer_set_config(key="capture_mode", value="som")."""
+    args: dict = {}
+    if key:
+        args["key"] = key
+        if value is not None:
+            args["value"] = value
+    if capture_mode:
+        args["capture_mode"] = capture_mode
+    if max_image_dimension >= 0:
+        args["max_image_dimension"] = max_image_dimension
+    if experimental_pip is not None:
+        args["experimental_pip"] = experimental_pip
+    if experimental_pip_geometry:
+        args["experimental_pip_geometry"] = experimental_pip_geometry
+    return _cua("set_config", args)
+
+
+@mcp.tool()
+def computer_check_permissions() -> dict:
+    """Diagnostic: Check required permissions for cua-driver-rs on Windows. Example: computer_check_permissions()."""
+    return _cua("check_permissions")
+
+
+@mcp.tool()
+def computer_check_for_update() -> dict:
+    """Diagnostic: Check whether a newer cua-driver-rs release is available on GitHub. Example: computer_check_for_update()."""
+    return _cua("check_for_update")
+
+
 if __name__ == "__main__":
     mcp.run(transport="stdio")
