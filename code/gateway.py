@@ -21,7 +21,9 @@ from pathlib import Path
 
 import httpx
 
-GATEWAY_V9_DIR = Path(__file__).resolve().parents[2] / "llm_gatewayV9"
+_p_local = Path(__file__).resolve().parents[1] / "llm_gatewayV9"
+_p_sibling = Path(__file__).resolve().parents[2] / "llm_gatewayV9"
+GATEWAY_V9_DIR = _p_local if _p_local.exists() else _p_sibling
 GATEWAY_URL = "http://localhost:8109"
 
 
