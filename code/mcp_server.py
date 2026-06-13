@@ -530,5 +530,108 @@ def computer_get_screen_size() -> dict:
     return _cua("get_screen_size")
 
 
+@mcp.tool()
+def computer_double_click(pid: int, window_id: int = 0, element_index: int = -1,
+                          x: float = -1.0, y: float = -1.0,
+                          modifier: list[str] | None = None, dispatch: str = "background",
+                          from_zoom: bool = False) -> dict:
+    """ACT: double-click against a target pid. Two addressing modes: element_index + window_id, or x,y window-local pixels. Example: computer_double_click(34384, 3342692, element_index=5)."""
+    args: dict = {"pid": pid, "dispatch": dispatch, "from_zoom": from_zoom}
+    if window_id:
+        args["window_id"] = window_id
+    if element_index >= 0:
+        args["element_index"] = element_index
+    if x >= 0 and y >= 0:
+        args["x"], args["y"] = x, y
+    if modifier:
+        args["modifier"] = modifier
+    return _cua("double_click", args)
+
+
+@mcp.tool()
+def computer_right_click(pid: int, window_id: int = 0, element_index: int = -1,
+                         x: float = -1.0, y: float = -1.0,
+                         modifier: list[str] | None = None, dispatch: str = "background",
+                         from_zoom: bool = False) -> dict:
+    """ACT: right-click against a target pid. Two addressing modes: element_index + window_id, or x,y window-local pixels. Example: computer_right_click(34384, 3342692, element_index=5)."""
+    args: dict = {"pid": pid, "dispatch": dispatch, "from_zoom": from_zoom}
+    if window_id:
+        args["window_id"] = window_id
+    if element_index >= 0:
+        args["element_index"] = element_index
+    if x >= 0 and y >= 0:
+        args["x"], args["y"] = x, y
+    if modifier:
+        args["modifier"] = modifier
+    return _cua("right_click", args)
+
+
+@mcp.tool()
+def computer_drag(pid: int, from_x: float, from_y: float, to_x: float, to_y: float,
+                  button: str = "left", window_id: int = 0, steps: int = 20,
+                  duration_ms: int = 500, dispatch: str = "background",
+                  from_zoom: bool = False, modifier: list[str] | None = None) -> dict:
+    """ACT: press-drag-release gesture from (from_x, from_y) to (to_x, to_y) in window-local pixels. Example: computer_drag(34384, 100, 100, 200, 200)."""
+    args: dict = {
+        "pid": pid,
+        "from_x": from_x,
+        "from_y": from_y,
+        "to_x": to_x,
+        "to_y": to_y,
+        "button": button,
+        "steps": steps,
+        "duration_ms": duration_ms,
+        "dispatch": dispatch,
+        "from_zoom": from_zoom
+    }
+    if window_id:
+        args["window_id"] = window_id
+    if modifier:
+        args["modifier"] = modifier
+    return _cua("drag", args)
+
+
+@mcp.tool()
+def computer_move_cursor(x: float, y: float, cursor_id: str = "") -> dict:
+    """ACT: move the agent cursor overlay to (x, y). Does NOT move the real mouse cursor. Example: computer_move_cursor(100, 200)."""
+    args: dict = {"x": x, "y": y}
+    if cursor_id:
+        args["cursor_id"] = cursor_id
+    return _cua("move_cursor", args)
+
+
+@mcp.tool()
+def computer_get_cursor_position() -> dict:
+    """Return the current mouse cursor position in screen points (origin top-left). Example: computer_get_cursor_position()."""
+    return _cua("get_cursor_position")
+
+
+@mcp.tool()
+def computer_bring_to_front(pid: int, window_id: int = 0) -> dict:
+    """ACT: activate pid's window (or window_id if specified) -- bring it to the OS foreground. Example: computer_bring_to_front(34384)."""
+    args: dict = {"pid": pid}
+    if window_id:
+        args["window_id"] = window_id
+    return _cua("bring_to_front", args)
+
+
+@mcp.tool()
+def computer_kill_app(pid: int) -> dict:
+    """ACT: force-terminate a process by pid. Example: computer_kill_app(34384)."""
+    return _cua("kill_app", {"pid": pid})
+
+
+@mcp.tool()
+def computer_debug_window_info(pid: int) -> dict:
+    """Diagnostic: dump everything cua-driver sees about a pid's top-level windows from the daemon's session perspective. Example: computer_debug_window_info(34384)."""
+    return _cua("debug_window_info", {"pid": pid})
+
+
+@mcp.tool()
+def computer_zoom(pid: int, window_id: int, x1: float, y1: float, x2: float, y2: float) -> dict:
+    """Zoom into a rectangular region of a window screenshot at full resolution. Example: computer_zoom(34384, 3342692, 10, 10, 100, 100)."""
+    return _cua("zoom", {"pid": pid, "window_id": window_id, "x1": x1, "y1": y1, "x2": x2, "y2": y2})
+
+
 if __name__ == "__main__":
     mcp.run(transport="stdio")

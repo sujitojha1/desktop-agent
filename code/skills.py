@@ -371,6 +371,132 @@ _TOOL_CATALOG = {
         "description": "Return the main display's logical size and backing scale factor.",
         "input_schema": {"type": "object", "properties": {}, "required": []},
     },
+    "computer_double_click": {
+        "name": "computer_double_click",
+        "description": "ACT: double-click against a target pid. Prefer element_index (from the last get_window_state) for semantic double-clicks; use x,y window-local pixels only when no element covers the target.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "pid": {"type": "integer"},
+                "window_id": {"type": "integer", "default": 0},
+                "element_index": {"type": "integer", "default": -1},
+                "x": {"type": "number", "default": -1.0},
+                "y": {"type": "number", "default": -1.0},
+                "modifier": {"type": "array", "items": {"type": "string"}},
+                "dispatch": {"type": "string", "enum": ["background", "foreground", "auto"], "default": "background"},
+                "from_zoom": {"type": "boolean", "default": False},
+            },
+            "required": ["pid"],
+        },
+    },
+    "computer_right_click": {
+        "name": "computer_right_click",
+        "description": "ACT: right-click against a target pid. Prefer element_index (from the last get_window_state) for semantic right-clicks; use x,y window-local pixels only when no element covers the target.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "pid": {"type": "integer"},
+                "window_id": {"type": "integer", "default": 0},
+                "element_index": {"type": "integer", "default": -1},
+                "x": {"type": "number", "default": -1.0},
+                "y": {"type": "number", "default": -1.0},
+                "modifier": {"type": "array", "items": {"type": "string"}},
+                "dispatch": {"type": "string", "enum": ["background", "foreground", "auto"], "default": "background"},
+                "from_zoom": {"type": "boolean", "default": False},
+            },
+            "required": ["pid"],
+        },
+    },
+    "computer_drag": {
+        "name": "computer_drag",
+        "description": "ACT: press-drag-release gesture from (from_x, from_y) to (to_x, to_y) in window-local screenshot pixels.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "pid": {"type": "integer"},
+                "from_x": {"type": "number"},
+                "from_y": {"type": "number"},
+                "to_x": {"type": "number"},
+                "to_y": {"type": "number"},
+                "button": {"type": "string", "enum": ["left", "right", "middle"], "default": "left"},
+                "window_id": {"type": "integer", "default": 0},
+                "steps": {"type": "integer", "default": 20},
+                "duration_ms": {"type": "integer", "default": 500},
+                "dispatch": {"type": "string", "enum": ["background", "foreground", "auto"], "default": "background"},
+                "from_zoom": {"type": "boolean", "default": False},
+                "modifier": {"type": "array", "items": {"type": "string"}},
+            },
+            "required": ["pid", "from_x", "from_y", "to_x", "to_y"],
+        },
+    },
+    "computer_move_cursor": {
+        "name": "computer_move_cursor",
+        "description": "ACT: move the agent cursor overlay to (x, y). Does NOT move the real mouse cursor.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "x": {"type": "number"},
+                "y": {"type": "number"},
+                "cursor_id": {"type": "string", "default": ""},
+            },
+            "required": ["x", "y"],
+        },
+    },
+    "computer_get_cursor_position": {
+        "name": "computer_get_cursor_position",
+        "description": "Return the current mouse cursor position in screen points (origin top-left).",
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    "computer_bring_to_front": {
+        "name": "computer_bring_to_front",
+        "description": "ACT: activate pid's window (or window_id if specified) -- bring it to the OS foreground.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "pid": {"type": "integer"},
+                "window_id": {"type": "integer", "default": 0},
+            },
+            "required": ["pid"],
+        },
+    },
+    "computer_kill_app": {
+        "name": "computer_kill_app",
+        "description": "ACT: force-terminate a process by pid.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "pid": {"type": "integer"},
+            },
+            "required": ["pid"],
+        },
+    },
+    "computer_debug_window_info": {
+        "name": "computer_debug_window_info",
+        "description": "Diagnostic: dump everything cua-driver sees about a pid's top-level windows from the daemon's session perspective.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "pid": {"type": "integer"},
+            },
+            "required": ["pid"],
+        },
+    },
+    "computer_zoom": {
+        "name": "computer_zoom",
+        "description": "Zoom into a rectangular region of a window screenshot at full (native) resolution.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "pid": {"type": "integer"},
+                "window_id": {"type": "integer"},
+                "x1": {"type": "number"},
+                "y1": {"type": "number"},
+                "x2": {"type": "number"},
+                "y2": {"type": "number"},
+            },
+            "required": ["pid", "window_id", "x1", "y1", "x2", "y2"],
+        },
+    },
 }
 
 

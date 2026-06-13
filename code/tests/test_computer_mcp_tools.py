@@ -89,3 +89,70 @@ def test_get_accessibility_tree_builds_correct_call(monkeypatch):
     args = json.loads(argv[3])
     assert args == {}
     assert out == {"windows": []}
+
+
+def test_double_click_builds_correct_call(monkeypatch):
+    seen = _patch(monkeypatch, stdout="{}")
+    mcp_server.computer_double_click(34384, 3342692, element_index=5)
+    args = json.loads(seen["argv"][3])
+    assert args == {"pid": 34384, "window_id": 3342692, "element_index": 5, "dispatch": "background", "from_zoom": False}
+
+
+def test_right_click_builds_correct_call(monkeypatch):
+    seen = _patch(monkeypatch, stdout="{}")
+    mcp_server.computer_right_click(34384, x=10.0, y=20.0)
+    args = json.loads(seen["argv"][3])
+    assert args == {"pid": 34384, "x": 10.0, "y": 20.0, "dispatch": "background", "from_zoom": False}
+
+
+def test_drag_builds_correct_call(monkeypatch):
+    seen = _patch(monkeypatch, stdout="{}")
+    mcp_server.computer_drag(34384, from_x=10.0, from_y=10.0, to_x=100.0, to_y=100.0)
+    args = json.loads(seen["argv"][3])
+    assert args == {
+        "pid": 34384, "from_x": 10.0, "from_y": 10.0, "to_x": 100.0, "to_y": 100.0,
+        "button": "left", "steps": 20, "duration_ms": 500, "dispatch": "background", "from_zoom": False
+    }
+
+
+def test_move_cursor_builds_correct_call(monkeypatch):
+    seen = _patch(monkeypatch, stdout="{}")
+    mcp_server.computer_move_cursor(10.0, 20.0, cursor_id="agent")
+    args = json.loads(seen["argv"][3])
+    assert args == {"x": 10.0, "y": 20.0, "cursor_id": "agent"}
+
+
+def test_get_cursor_position_builds_correct_call(monkeypatch):
+    seen = _patch(monkeypatch, stdout=json.dumps({"x": 100, "y": 200}))
+    out = mcp_server.computer_get_cursor_position()
+    args = json.loads(seen["argv"][3])
+    assert args == {}
+    assert out == {"x": 100, "y": 200}
+
+
+def test_bring_to_front_builds_correct_call(monkeypatch):
+    seen = _patch(monkeypatch, stdout="{}")
+    mcp_server.computer_bring_to_front(34384, 3342692)
+    args = json.loads(seen["argv"][3])
+    assert args == {"pid": 34384, "window_id": 3342692}
+
+
+def test_kill_app_builds_correct_call(monkeypatch):
+    seen = _patch(monkeypatch, stdout="{}")
+    mcp_server.computer_kill_app(34384)
+    args = json.loads(seen["argv"][3])
+    assert args == {"pid": 34384}
+
+
+def test_debug_window_info_builds_correct_call(monkeypatch):
+    seen = _patch(monkeypatch, stdout="{}")
+    mcp_server.computer_debug_window_info(34384)
+    args = json.loads(seen["argv"][3])
+    assert args == {"pid": 34384}
+
+
+def test_zoom_builds_correct_call(monkeypatch):
+    seen = _patch(monkeypatch, stdout="{}")
+    mcp_server.computer_zoom(34384, 3342692, 10.0, 10.0, 100.0, 100.0)
+    args = json.loads(seen["argv"][3])
+    assert args == {"pid": 34384, "window_id": 3342692, "x1": 10.0, "y1": 10.0, "x2": 100.0, "y2": 100.0}

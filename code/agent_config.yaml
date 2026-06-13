@@ -121,6 +121,15 @@ computer:
     - computer_scroll
     - computer_set_value
     - computer_get_screen_size
+    - computer_double_click
+    - computer_right_click
+    - computer_drag
+    - computer_move_cursor
+    - computer_get_cursor_position
+    - computer_bring_to_front
+    - computer_kill_app
+    - computer_debug_window_info
+    - computer_zoom
   temperature: 0.0
   max_tokens: 1500
   description: |
