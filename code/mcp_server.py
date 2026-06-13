@@ -388,13 +388,19 @@ def search_knowledge(query: str, k: int = 5) -> list[dict]:
     ]
 
 
-# ── Computer-use tools (Session 10): the cua-driver UIA surface ──────────────
-# These wrap the locally-installed `cua-driver` daemon via `cua-driver call`.
-# The driver exposes the full Windows UIA tree (get_window_state -> element
-# indices) plus element-addressed, focus-free actions — the semantic
-# scan -> act -> verify loop the §4 substrate describes. We shell out to the
-# driver rather than reimplement UIA; the `computer` skill drives these tools
-# through the normal MCP tool-use loop (agent_config.yaml: computer.tools_allowed).
+# ── Computer-use tools (Surface B): the cua-driver UIA daemon ─────────────────
+# ┌─────────────────────────────────────────────────────────────────────────┐
+# │ SURFACE B — cua-driver daemon (Rust binary, UIA-based, element indices)│
+# │                                                                        │
+# │ These tools shell out to `cua-driver call <tool> <json>`.  They are    │
+# │ NOT used by the active ComputerSkill (Surface A) which runs through    │
+# │ cua.Localhost SDK + vision-based coordinate actions (computer/skill.py │
+# │ + computer/tools.py).                                                  │
+# │                                                                        │
+# │ Surface B is retained for future use (e.g., an MCP-loop skill that     │
+# │ uses UIA element indices instead of vision).  No skill currently lists │
+# │ these in its `tools_allowed`, so they are unreachable at runtime.      │
+# └─────────────────────────────────────────────────────────────────────────┘
 import shutil
 import subprocess
 
