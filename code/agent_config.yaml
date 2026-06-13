@@ -112,6 +112,7 @@ computer:
     - computer_list_apps
     - computer_list_windows
     - computer_launch_app
+    - computer_get_accessibility_tree
     - computer_get_window_state
     - computer_click
     - computer_type_text

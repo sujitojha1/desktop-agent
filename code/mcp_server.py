@@ -519,6 +519,12 @@ def computer_set_value(pid: int, window_id: int, element_index: int, value: str)
 
 
 @mcp.tool()
+def computer_get_accessibility_tree() -> dict:
+    """Return a lightweight snapshot of the desktop: running processes and on-screen visible windows with their bounds and owner pid. Example: computer_get_accessibility_tree()."""
+    return _cua("get_accessibility_tree")
+
+
+@mcp.tool()
 def computer_get_screen_size() -> dict:
     """Return the main display's logical size and backing scale factor. Example: computer_get_screen_size()."""
     return _cua("get_screen_size")

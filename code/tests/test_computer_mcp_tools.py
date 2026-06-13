@@ -79,3 +79,13 @@ def test_large_tree_is_truncated(monkeypatch):
     _patch(monkeypatch, stdout=json.dumps({"element_count": 1, "tree_markdown": big}))
     out = mcp_server.computer_get_window_state(1, 2)
     assert len(out["tree_markdown"]) < 9000 and "truncated" in out["tree_markdown"]
+
+
+def test_get_accessibility_tree_builds_correct_call(monkeypatch):
+    seen = _patch(monkeypatch, stdout=json.dumps({"windows": []}))
+    out = mcp_server.computer_get_accessibility_tree()
+    argv = seen["argv"]
+    assert argv[:3] == ["cua-driver", "call", "get_accessibility_tree"]
+    args = json.loads(argv[3])
+    assert args == {}
+    assert out == {"windows": []}

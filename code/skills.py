@@ -361,6 +361,11 @@ _TOOL_CATALOG = {
             "required": ["pid", "window_id", "element_index", "value"],
         },
     },
+    "computer_get_accessibility_tree": {
+        "name": "computer_get_accessibility_tree",
+        "description": "Return a lightweight snapshot of the desktop: running processes and on-screen visible windows with their bounds and owner pid.",
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
     "computer_get_screen_size": {
         "name": "computer_get_screen_size",
         "description": "Return the main display's logical size and backing scale factor.",
