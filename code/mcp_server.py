@@ -388,5 +388,141 @@ def search_knowledge(query: str, k: int = 5) -> list[dict]:
     ]
 
 
+# ── Computer-use tools (Session 10): the cua-driver UIA surface ──────────────
+# These wrap the locally-installed `cua-driver` daemon via `cua-driver call`.
+# The driver exposes the full Windows UIA tree (get_window_state -> element
+# indices) plus element-addressed, focus-free actions — the semantic
+# scan -> act -> verify loop the §4 substrate describes. We shell out to the
+# driver rather than reimplement UIA; the `computer` skill drives these tools
+# through the normal MCP tool-use loop (agent_config.yaml: computer.tools_allowed).
+import shutil
+import subprocess
+
+CUA_DRIVER_BIN = os.environ.get("CUA_DRIVER_BIN", "cua-driver")
+
+
+def _cua(tool: str, args: dict | None = None) -> dict:
+    """Invoke one cua-driver tool through the running daemon and return its
+    parsed JSON. On failure returns {"error": ...} rather than raising, so the
+    model sees the message and can recover (re-scan, pick a different element)."""
+    exe = shutil.which(CUA_DRIVER_BIN) or CUA_DRIVER_BIN
+    try:
+        proc = subprocess.run(
+            [exe, "call", tool, json.dumps(args or {})],
+            capture_output=True, text=True, timeout=60,
+        )
+    except Exception as e:  # noqa: BLE001
+        return {"error": f"cua-driver {tool} failed to spawn: {type(e).__name__}: {e}"}
+    if proc.returncode != 0:
+        return {"error": (proc.stderr or proc.stdout or "non-zero exit").strip()}
+    out = (proc.stdout or "").strip()
+    if not out:
+        return {"ok": True}
+    try:
+        return json.loads(out)
+    except json.JSONDecodeError:
+        return {"raw": out}
+
+
+@mcp.tool()
+def computer_list_apps() -> dict:
+    """List running + installed Windows apps with pids. Start here to find a target app's pid. Example: computer_list_apps()."""
+    return _cua("list_apps")
+
+
+@mcp.tool()
+def computer_list_windows(pid: int = 0) -> dict:
+    """List top-level windows (title, pid, window_id=HWND). Pass pid>0 to scope to one app. The window_id is what you pass to computer_get_window_state and the action tools. Example: computer_list_windows(0)."""
+    return _cua("list_windows", {"pid": pid} if pid else {})
+
+
+@mcp.tool()
+def computer_launch_app(name: str) -> dict:
+    """Launch a Windows app and return its real pid plus windows[] (each with window_id). Prefer this over list_windows for Store apps (Calculator, Notepad), whose visible window is owned by a frame host. Example: computer_launch_app("calc")."""
+    return _cua("launch_app", {"name": name})
+
+
+@mcp.tool()
+def computer_get_window_state(pid: int, window_id: int,
+                              capture_mode: str = "ax", query: str = "") -> dict:
+    """SCAN. Walk the window's UIA tree; returns a Markdown element list with every actionable control tagged [element_index N], plus element_count. Pass those indices to computer_click / computer_type_text / computer_set_value. Call once per turn per (pid, window_id) before any element action — the index map is replaced by the next scan. capture_mode: 'ax' (tree only, fastest), 'som' (tree+screenshot), 'vision' (screenshot only). `query` filters the markdown to matching lines + ancestors. Example: computer_get_window_state(34384, 3342692, "ax", "Button")."""
+    args = {"pid": pid, "window_id": window_id, "capture_mode": capture_mode}
+    if query:
+        args["query"] = query
+    res = _cua("get_window_state", args)
+    md = res.get("tree_markdown")
+    if isinstance(md, str) and len(md) > 6000:
+        res["tree_markdown"] = md[:6000] + "\n…[truncated — pass `query` to filter]"
+    return res
+
+
+@mcp.tool()
+def computer_click(pid: int, window_id: int = 0, element_index: int = -1,
+                   x: int = -1, y: int = -1, button: str = "left",
+                   count: int = 1) -> dict:
+    """ACT: click. Prefer element_index (from the last get_window_state) for semantic, focus-free clicks; use x,y window-local pixels only when no element covers the target. Re-scan to verify. Example: computer_click(34384, 3342692, element_index=5)."""
+    args: dict = {"pid": pid, "button": button, "count": count}
+    if window_id:
+        args["window_id"] = window_id
+    if element_index >= 0:
+        args["element_index"] = element_index
+    if x >= 0 and y >= 0:
+        args["x"], args["y"] = x, y
+    return _cua("click", args)
+
+
+@mcp.tool()
+def computer_type_text(pid: int, text: str, window_id: int = 0,
+                       element_index: int = -1) -> dict:
+    """ACT: type `text` into the focused control (or `element_index` if given). Example: computer_type_text(34384, "hello", 3342692)."""
+    args: dict = {"pid": pid, "text": text}
+    if window_id:
+        args["window_id"] = window_id
+    if element_index >= 0:
+        args["element_index"] = element_index
+    return _cua("type_text", args)
+
+
+@mcp.tool()
+def computer_press_key(pid: int, key: str, window_id: int = 0) -> dict:
+    """ACT: press one key, e.g. 'enter', 'escape', 'tab', '='. Example: computer_press_key(34384, "enter")."""
+    args: dict = {"pid": pid, "key": key}
+    if window_id:
+        args["window_id"] = window_id
+    return _cua("press_key", args)
+
+
+@mcp.tool()
+def computer_hotkey(pid: int, keys: list[str], window_id: int = 0) -> dict:
+    """ACT: press a key chord, e.g. ['ctrl','s'] or ['alt','F4']. Example: computer_hotkey(34384, ["ctrl","s"])."""
+    args: dict = {"pid": pid, "keys": keys}
+    if window_id:
+        args["window_id"] = window_id
+    return _cua("hotkey", args)
+
+
+@mcp.tool()
+def computer_scroll(pid: int, direction: str, window_id: int = 0,
+                    amount: int = 3) -> dict:
+    """ACT: scroll the focused region. direction in up/down/left/right. Example: computer_scroll(34384, "down", amount=5)."""
+    args: dict = {"pid": pid, "direction": direction, "amount": amount}
+    if window_id:
+        args["window_id"] = window_id
+    return _cua("scroll", args)
+
+
+@mcp.tool()
+def computer_set_value(pid: int, window_id: int, element_index: int, value: str) -> dict:
+    """ACT: set a UIA element's value directly via ValuePattern (text fields, sliders) — faster and more reliable than typing. element_index from the last get_window_state. Example: computer_set_value(34384, 3342692, 12, "56")."""
+    return _cua("set_value", {"pid": pid, "window_id": window_id,
+                              "element_index": element_index, "value": value})
+
+
+@mcp.tool()
+def computer_get_screen_size() -> dict:
+    """Return the main display's logical size and backing scale factor. Example: computer_get_screen_size()."""
+    return _cua("get_screen_size")
+
+
 if __name__ == "__main__":
     mcp.run(transport="stdio")

@@ -102,18 +102,29 @@ browser:
 
 computer:
   prompt: prompts/computer.md
-  # Like Browser, the Computer skill does not go through the standard
-  # LLM-call dispatch. It owns its own cascade (deterministic launch →
-  # vision loop) over the real desktop via cua.Localhost, routing each
-  # vision call through the V9 gateway internally. temperature / max_tokens
-  # are kept here for registry uniformity but the dispatcher ignores them.
+  # The Computer skill drives the real Windows desktop through the
+  # cua-driver UIA tools exposed by mcp_server.py. It is a NORMAL
+  # tool-using skill: dispatch goes through the standard tool-use loop
+  # (mcp_runner.run_with_tools) like researcher/retriever — no bespoke
+  # cascade, no special branch in skills.py. The scan → act → verify
+  # loop is the model's job, grounded in get_window_state's element tree.
+  tools_allowed:
+    - computer_list_apps
+    - computer_list_windows
+    - computer_launch_app
+    - computer_get_window_state
+    - computer_click
+    - computer_type_text
+    - computer_press_key
+    - computer_hotkey
+    - computer_scroll
+    - computer_set_value
+    - computer_get_screen_size
   temperature: 0.0
-  max_tokens: 1024
+  max_tokens: 1500
   description: |
-    Drives the real desktop through cua.Localhost (direct host control,
-    no VM). Cascade: deterministic (launch app + scripted steps) → vision
-    (screenshot → V9 /v1/vision → coordinate clicks). Inputs in metadata:
-    goal (required), app (optional launch target), actions (optional
-    deterministic steps), max_steps (optional). Returns ComputerOutput
-    with the chosen layer surfaced as output.path. Use for native desktop
-    apps and system dialogs that Browser's URL cascade cannot reach.
+    Drives the real Windows desktop via the cua-driver UIA tools
+    (get_window_state → [element_index] → click/type/set_value), the
+    semantic scan → act → verify loop. Inputs in metadata: goal
+    (required). Use for native desktop apps and system dialogs that
+    Browser's URL cascade cannot reach.

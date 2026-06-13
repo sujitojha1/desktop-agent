@@ -236,6 +236,136 @@ _TOOL_CATALOG = {
             "required": ["query"],
         },
     },
+    # ── cua-driver computer-use tools (backed by mcp_server.computer_*) ──────
+    # Schemas the gateway shows the model. Dispatch is handled by the matching
+    # @mcp.tool() in mcp_server.py, which shells out to `cua-driver call`.
+    "computer_list_apps": {
+        "name": "computer_list_apps",
+        "description": "List running + installed Windows apps with pids. Start here to find a target app's pid.",
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    "computer_list_windows": {
+        "name": "computer_list_windows",
+        "description": "List top-level windows (title, pid, window_id=HWND). pid>0 scopes to one app.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"pid": {"type": "integer", "default": 0}},
+            "required": [],
+        },
+    },
+    "computer_launch_app": {
+        "name": "computer_launch_app",
+        "description": "Launch a Windows app; returns its real pid + windows[] (each with window_id). Prefer over list_windows for Store apps (Calculator, Notepad).",
+        "input_schema": {
+            "type": "object",
+            "properties": {"name": {"type": "string"}},
+            "required": ["name"],
+        },
+    },
+    "computer_get_window_state": {
+        "name": "computer_get_window_state",
+        "description": "SCAN: walk the window's UIA tree → Markdown element list, each control tagged [element_index N], plus element_count. Call once per turn before any element action; the index map is replaced by the next scan. capture_mode: ax|som|vision. query filters the markdown.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "pid": {"type": "integer"},
+                "window_id": {"type": "integer"},
+                "capture_mode": {"type": "string", "enum": ["ax", "som", "vision"], "default": "ax"},
+                "query": {"type": "string", "default": ""},
+            },
+            "required": ["pid", "window_id"],
+        },
+    },
+    "computer_click": {
+        "name": "computer_click",
+        "description": "ACT: click. Prefer element_index (from the last get_window_state) for focus-free semantic clicks; use x,y only when no element covers the target. Re-scan to verify.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "pid": {"type": "integer"},
+                "window_id": {"type": "integer", "default": 0},
+                "element_index": {"type": "integer", "default": -1},
+                "x": {"type": "integer", "default": -1},
+                "y": {"type": "integer", "default": -1},
+                "button": {"type": "string", "enum": ["left", "right", "middle"], "default": "left"},
+                "count": {"type": "integer", "default": 1},
+            },
+            "required": ["pid"],
+        },
+    },
+    "computer_type_text": {
+        "name": "computer_type_text",
+        "description": "ACT: type text into the focused control (or element_index if given).",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "pid": {"type": "integer"},
+                "text": {"type": "string"},
+                "window_id": {"type": "integer", "default": 0},
+                "element_index": {"type": "integer", "default": -1},
+            },
+            "required": ["pid", "text"],
+        },
+    },
+    "computer_press_key": {
+        "name": "computer_press_key",
+        "description": "ACT: press one key, e.g. 'enter', 'escape', 'tab', '='.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "pid": {"type": "integer"},
+                "key": {"type": "string"},
+                "window_id": {"type": "integer", "default": 0},
+            },
+            "required": ["pid", "key"],
+        },
+    },
+    "computer_hotkey": {
+        "name": "computer_hotkey",
+        "description": "ACT: press a key chord, e.g. ['ctrl','s'] or ['alt','F4'].",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "pid": {"type": "integer"},
+                "keys": {"type": "array", "items": {"type": "string"}},
+                "window_id": {"type": "integer", "default": 0},
+            },
+            "required": ["pid", "keys"],
+        },
+    },
+    "computer_scroll": {
+        "name": "computer_scroll",
+        "description": "ACT: scroll the focused region. direction in up/down/left/right.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "pid": {"type": "integer"},
+                "direction": {"type": "string", "enum": ["up", "down", "left", "right"]},
+                "window_id": {"type": "integer", "default": 0},
+                "amount": {"type": "integer", "default": 3},
+            },
+            "required": ["pid", "direction"],
+        },
+    },
+    "computer_set_value": {
+        "name": "computer_set_value",
+        "description": "ACT: set a UIA element's value directly via ValuePattern (text fields, sliders) — faster than typing. element_index from the last get_window_state.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "pid": {"type": "integer"},
+                "window_id": {"type": "integer"},
+                "element_index": {"type": "integer"},
+                "value": {"type": "string"},
+            },
+            "required": ["pid", "window_id", "element_index", "value"],
+        },
+    },
+    "computer_get_screen_size": {
+        "name": "computer_get_screen_size",
+        "description": "Return the main display's logical size and backing scale factor.",
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
 }
 
 
@@ -309,28 +439,6 @@ async def run_skill(skill: Skill, node_id: str, graph_nodes,
         from browser.skill import BrowserSkill
         sk = BrowserSkill(
             artifacts_root=str(ROOT / "state" / "sessions" / session_id / "browser"),
-            session=session_id,
-        )
-        result = await sk.run(node_spec)
-        if not result.elapsed_s:
-            result.elapsed_s = time.time() - started
-        return result, rendered
-
-    if skill.name == "computer":
-        # Same shape as the browser branch: the Computer skill owns its own
-        # cascade (deterministic launch → vision loop) over the real desktop
-        # via cua.Localhost and routes each vision call through the V9 gateway
-        # internally — so we bypass the gateway-chat dispatch and hand off to
-        # ComputerSkill.run(NodeSpec).
-        node_dict = graph_nodes[node_id]
-        node_spec = NodeSpec(
-            skill="computer",
-            inputs=node_dict.get("inputs") or [],
-            metadata=node_dict.get("metadata") or {},
-        )
-        from computer.skill import ComputerSkill
-        sk = ComputerSkill(
-            artifacts_root=str(ROOT / "state" / "sessions" / session_id / "computer"),
             session=session_id,
         )
         result = await sk.run(node_spec)
