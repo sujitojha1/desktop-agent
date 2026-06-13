@@ -162,13 +162,29 @@ class ComputerSkill:
         # plain-await form keeps the connect/teardown explicit and lets the
         # `finally` guarantee disconnect even on a mid-run exception.
         host = await cua.Localhost.connect()
+        prelude: list[dict] = []
         try:
             # ── Layer 1: deterministic ──────────────────────────────────────
             if app:
                 await self._launch(host, app)
-                await asyncio.sleep(1.0)
+                # Give a freshly-launched window time to realize before we try
+                # to find + maximize it; a 1 s wait was too short and the
+                # maximize landed on a not-yet-visible window.
+                await asyncio.sleep(2.0)
+                # Front-and-maximize the launched window so perception sees a
+                # clean, full-screen target instead of one small window buried
+                # in desktop clutter. cua.Localhost.window can only read the
+                # active title, so we drop to the synchronous cua_auto backend
+                # (wrapped in to_thread) for the activate/maximize it omits.
+                title_hint = node.metadata.get("window_title") or await self._safe_title(host)
+                if title_hint:
+                    outcome = await self._front_and_maximize(title_hint)
+                    prelude.append({"turn": 0, "thinking": "setup: front + maximize",
+                                    "actions": [{"type": "front_maximize", "value": title_hint}],
+                                    "outcome": outcome})
+                    await asyncio.sleep(0.6)
             if det_actions:
-                steps = await self._run_deterministic(host, det_actions)
+                steps = prelude + await self._run_deterministic(host, det_actions)
                 final_title = await self._safe_title(host)
                 return self._pack("deterministic", goal, steps,
                                   content=det_actions[-1].get("note") if det_actions else None,
@@ -177,7 +193,7 @@ class ComputerSkill:
             # ── Layer 2 (a11y) is intentionally absent — see module docstring.
             # ── Layer 3: vision scan → act → verify loop ────────────────────
             steps, success, note = await self._drive_vision(
-                host, goal, client, artifacts_dir, max_steps,
+                host, goal, client, artifacts_dir, max_steps, prelude=prelude,
             )
             final_title = await self._safe_title(host)
             out = self._pack("vision", goal, steps, content=note,
@@ -194,8 +210,11 @@ class ComputerSkill:
                 pass
 
     # ── vision loop ─────────────────────────────────────────────────────────
-    async def _drive_vision(self, host, goal, client, artifacts_dir, max_steps):
-        steps: list[dict] = []
+    async def _drive_vision(self, host, goal, client, artifacts_dir, max_steps,
+                            prelude: list[dict] | None = None):
+        # `prelude` carries non-vision setup steps (e.g. front+maximize) so
+        # they show up in the recorded trace / replay alongside the vision turns.
+        steps: list[dict] = list(prelude or [])
         failures = 0
         for turn in range(1, max_steps + 1):
             # scan
@@ -317,6 +336,41 @@ class ComputerSkill:
         if not app:
             return
         await host.shell.run(f'start "" {app}', timeout=15)
+
+    async def _front_and_maximize(self, title_hint: str) -> str:
+        """Bring every window matching `title_hint` to the front and maximize it,
+        via the synchronous `cua_auto` backend (the localhost wrapper exposes no
+        activate/maximize). Run in a thread so the async loop is not blocked.
+        `activate_window` often returns False under Windows' foreground-lock,
+        but `maximize_window` still raises the window to the top — verified."""
+        def _do() -> str:
+            try:
+                import cua_auto
+            except Exception as e:                            # noqa: BLE001
+                return f"cua_auto unavailable: {e}"
+            try:
+                handles = cua_auto.window.get_windows_with_title(title_hint) or []
+            except Exception as e:                            # noqa: BLE001
+                return f"get_windows_with_title failed: {e}"
+            if not handles:
+                return f"no window matched {title_hint!r}"
+            import time as _t
+            activated = maximized = 0
+            # Two passes: the first realizes/raises the window, the second
+            # makes the maximize stick once it is actually foregrounded.
+            for _pass in range(2):
+                for h in handles:
+                    try:
+                        if cua_auto.window.activate_window(h):
+                            activated += 1
+                        if cua_auto.window.maximize_window(h):
+                            maximized += 1
+                    except Exception:                         # noqa: BLE001
+                        pass
+                _t.sleep(0.4)
+            return (f"front+maximize {title_hint!r}: "
+                    f"{len(handles)} window(s), activated={activated}, maximized={maximized}")
+        return await asyncio.to_thread(_do)
 
     async def _screenshot(self, host):
         b64 = await host.screen.screenshot_base64()
