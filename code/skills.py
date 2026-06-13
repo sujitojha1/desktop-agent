@@ -236,9 +236,12 @@ _TOOL_CATALOG = {
             "required": ["query"],
         },
     },
-    # ── cua-driver computer-use tools (backed by mcp_server.computer_*) ──────
-    # Schemas the gateway shows the model. Dispatch is handled by the matching
-    # @mcp.tool() in mcp_server.py, which shells out to `cua-driver call`.
+    # ── SURFACE B: cua-driver UIA tools (currently unreachable) ────────────
+    # These schemas exist for the cua-driver daemon (Rust binary) which uses
+    # UIA element indices.  The active ComputerSkill (Surface A) bypasses
+    # MCP entirely and uses cua.Localhost SDK + vision-based coordinate
+    # actions.  No skill currently lists these in tools_allowed, so they
+    # are never passed to the gateway.  Retained for future UIA-loop work.
     "computer_list_apps": {
         "name": "computer_list_apps",
         "description": "List running + installed Windows apps with pids. Start here to find a target app's pid.",

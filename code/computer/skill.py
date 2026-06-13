@@ -46,6 +46,11 @@ from .tools import ToolContext, front_and_maximize, run_tool, tool_names
 # cua.Localhost has no accessibility tree, so the vision model addresses the
 # screen by raw pixels (origin top-left). Coordinates are in screenshot space;
 # the skill rescales them to the driver's logical click space before acting.
+# Only ACTION tools the vision model should emit mid-loop. Diagnostic/utility
+# tools (list_windows, get_screen_size, get_cursor_position, screenshot, zoom)
+# and dangerous tools (kill_app, bring_to_front) are excluded from the enum
+# so the model can't emit them during the vision loop. They remain in
+# computer/tools.py for deterministic-layer and programmatic use.
 ACTION_SCHEMA: dict = {
     "type": "object",
     "additionalProperties": False,
@@ -61,16 +66,11 @@ ACTION_SCHEMA: dict = {
                 "additionalProperties": False,
                 "required": ["type"],
                 "properties": {
-                    # Tool names mirror the registry in computer/tools.py, plus
-                    # the loop-level `done`. `tool_names()` is the source of truth.
                     "type": {
                         "type": "string",
                         "enum": ["click", "double_click", "right_click", "move",
                                  "drag", "scroll", "type", "key", "hotkey",
-                                 "launch", "kill_app", "bring_to_front",
-                                 "list_windows", "get_screen_size",
-                                 "get_cursor_position", "screenshot", "zoom",
-                                 "wait", "done"],
+                                 "launch", "wait", "done"],
                     },
                     "x": {"type": "integer"},
                     "y": {"type": "integer"},
@@ -79,7 +79,6 @@ ACTION_SCHEMA: dict = {
                     "to_x": {"type": "integer"},
                     "to_y": {"type": "integer"},
                     "button": {"type": "string"},
-                    "title": {"type": "string"},
                     "value": {"type": "string"},
                     "keys": {"type": "array", "items": {"type": "string"}},
                     "dx": {"type": "integer"},
@@ -178,7 +177,7 @@ class ComputerSkill:
         # `finally` guarantee disconnect even on a mid-run exception.
         host = await cua.Localhost.connect()
         prelude: list[dict] = []
-        launched_pids: list[int] = []
+        launched_pids: set[int] = set()
         try:
             # Track PIDs before launching to identify the new process
             pids_before = set()
@@ -201,7 +200,7 @@ class ComputerSkill:
                     for w in pids_after:
                         pid = w.get("pid")
                         if pid and pid not in pids_before:
-                            launched_pids.append(pid)
+                            launched_pids.add(pid)
                 except Exception:
                     pass
 
@@ -223,7 +222,7 @@ class ComputerSkill:
                             matching_wins = await enumerate_windows(host, title_hint)
                             for w in matching_wins:
                                 if w.get("pid"):
-                                    launched_pids.append(w["pid"])
+                                    launched_pids.add(w["pid"])
                         except Exception:
                             pass
             if det_actions:
@@ -238,6 +237,14 @@ class ComputerSkill:
             steps, success, note = await self._drive_vision(
                 host, goal, client, artifacts_dir, max_steps, prelude=prelude,
             )
+            # Fix 6: capture a final verification screenshot after done so
+            # there is a post-action record for auditing / replay.
+            if artifacts_dir:
+                try:
+                    _, _, _, final_raw = await self._screenshot(host)
+                    (artifacts_dir / "final.png").write_bytes(final_raw)
+                except Exception:  # noqa: BLE001
+                    pass
             final_title = await self._safe_title(host)
             out = self._pack("vision", goal, steps, content=note,
                              final_title=final_title, elapsed=time.time() - t0)
@@ -247,14 +254,34 @@ class ComputerSkill:
             return self._pack_error(goal, f"computer skill error: {type(e).__name__}: {e}",
                                     elapsed=time.time() - t0)
         finally:
+            # Fix 4: graceful close → wait → fallback force-kill → delay
             if launched_pids:
                 for pid in launched_pids:
                     try:
-                        # Close the window gracefully by sending a main window close request
-                        cmd = f"powershell -NoProfile -Command \"$p = Get-Process -Id {pid} -ErrorAction SilentlyContinue; if ($p) {{ $p.CloseMainWindow() }}\""
-                        await host.shell.run(cmd, timeout=10)
-                    except Exception:
+                        # Step 1: ask the window to close gracefully
+                        close_cmd = (
+                            f'powershell -NoProfile -Command "'
+                            f'$p = Get-Process -Id {pid} -ErrorAction SilentlyContinue; '
+                            f'if ($p) {{ $p.CloseMainWindow() | Out-Null }}"'
+                        )
+                        await host.shell.run(close_cmd, timeout=10)
+                    except Exception:  # noqa: BLE001
                         pass
+                # Give windows time to animate closed
+                await asyncio.sleep(2.0)
+                # Step 2: force-kill any that survived (unsaved-dialog, etc.)
+                for pid in launched_pids:
+                    try:
+                        kill_cmd = (
+                            f'powershell -NoProfile -Command "'
+                            f'$p = Get-Process -Id {pid} -ErrorAction SilentlyContinue; '
+                            f'if ($p) {{ Stop-Process -Id {pid} -Force -ErrorAction SilentlyContinue }}"'
+                        )
+                        await host.shell.run(kill_cmd, timeout=10)
+                    except Exception:  # noqa: BLE001
+                        pass
+            # Small delay before disconnect to let final I/O settle
+            await asyncio.sleep(1.0)
             try:
                 await host.disconnect()
             except Exception:                                 # noqa: BLE001

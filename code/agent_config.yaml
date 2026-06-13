@@ -112,8 +112,10 @@ computer:
   description: |
     Drives the real desktop through cua.Localhost (direct host control,
     no VM). Cascade: deterministic (launch app + scripted steps) → vision
-    (screenshot → V9 /v1/vision → coordinate clicks). Inputs in metadata:
-    goal (required), app (optional launch target), actions (optional
-    deterministic steps), max_steps (optional). Returns ComputerOutput
-    with the chosen layer surfaced as output.path. Use for native desktop
-    apps and system dialogs that Browser's URL cascade cannot reach.
+    (screenshot → V9 /v1/vision → coordinate clicks/keys). There are no
+    element indices or UIA tree — the model addresses the screen by raw
+    pixel. Inputs in metadata: goal (required), app (optional launch
+    target), actions (optional deterministic steps), max_steps (optional
+    vision-loop cap, default 12). Returns ComputerOutput with the chosen
+    layer surfaced as output.path. Use for native desktop apps and system
+    dialogs that Browser's URL cascade cannot reach.
