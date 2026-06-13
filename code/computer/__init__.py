@@ -6,7 +6,6 @@ and actions are coordinate-based — there is no UIA accessibility tree — so t
 cascade is deterministic (launch + scripted steps) → vision (V9 /v1/vision).
 Reuses browser.client.V9Client for the gateway; no new gateway.
 """
-from .backend import CuaBackend
 from .skill import (
     ACTION_SCHEMA,
     ComputerOutput,
@@ -25,7 +24,6 @@ from .tools import (
 )
 
 __all__ = [
-    "CuaBackend",
     "ACTION_SCHEMA",
     "ComputerOutput",
     "ComputerSkill",

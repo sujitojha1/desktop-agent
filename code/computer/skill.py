@@ -30,7 +30,6 @@ from typing import Any, Optional
 
 import cua
 from pydantic import BaseModel, Field
-from .backend import CuaBackend
 
 from schemas import AgentResult, NodeSpec
 
@@ -173,12 +172,10 @@ class ComputerSkill:
         if artifacts_dir:
             artifacts_dir.mkdir(parents=True, exist_ok=True)
 
-        backend = CuaBackend.shared()
-        if self.session:
-            await backend.start_session(self.session)
-        else:
-            await backend.ensure_sdk()
-        host = backend.host
+        # cua.Localhost.connect() supports both `await` and `async with`; the
+        # plain-await form keeps the connect/teardown explicit and lets the
+        # `finally` guarantee disconnect even on a mid-run exception.
+        host = await cua.Localhost.connect()
         prelude: list[dict] = []
         launched_pids: set[int] = set()
         try:
@@ -286,10 +283,7 @@ class ComputerSkill:
             # Small delay before disconnect to let final I/O settle
             await asyncio.sleep(1.0)
             try:
-                if self.session:
-                    await backend.end_session(self.session)
-                else:
-                    await backend.disconnect()
+                await host.disconnect()
             except Exception:                                 # noqa: BLE001
                 pass
 

@@ -39,8 +39,6 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent))
 import artifacts as _artifacts  # noqa: E402
 import memory as _memory  # noqa: E402
-from computer.backend import CuaBackend
-_backend = CuaBackend.shared()
 
 MAX_SEARCH_RESULTS = 5  # hard cap — Tavily prices per result
 
@@ -390,21 +388,46 @@ def search_knowledge(query: str, k: int = 5) -> list[dict]:
     ]
 
 
-# ── Computer-use tools: consolidated SDK-primary + daemon fallback ────────────
+# ── Computer-use tools (Surface B): the cua-driver UIA daemon ─────────────────
 # ┌─────────────────────────────────────────────────────────────────────────┐
-# │ Each tool tries the cua.Localhost SDK first (Surface A: async, direct, │
-# │ no subprocess).  If the SDK is unavailable or the operation needs      │
-# │ pid-scoping / UIA element indices that the SDK lacks, the tool falls   │
-# │ back to `cua-driver call` subprocess (Surface B: daemon, UIA-capable). │
+# │ SURFACE B — cua-driver daemon (Rust binary, UIA-based, element indices)│
 # │                                                                        │
-# │ Session lifecycle:                                                     │
-# │   computer_start_session(id) → connects SDK + notifies daemon          │
-# │   computer_end_session(id)   → disconnects SDK + notifies daemon       │
-# │ Session ID flows from the orchestrator (flow.py → skills.py →          │
-# │ ComputerSkill → here) so every tool call is attributable.              │
+# │ These tools shell out to `cua-driver call <tool> <json>`.  They are    │
+# │ NOT used by the active ComputerSkill (Surface A) which runs through    │
+# │ cua.Localhost SDK + vision-based coordinate actions (computer/skill.py │
+# │ + computer/tools.py).                                                  │
+# │                                                                        │
+# │ Surface B is retained for future use (e.g., an MCP-loop skill that     │
+# │ uses UIA element indices instead of vision).  No skill currently lists │
+# │ these in its `tools_allowed`, so they are unreachable at runtime.      │
 # └─────────────────────────────────────────────────────────────────────────┘
-import asyncio as _aio
-# The local daemon helper and SDK connection are now managed by _backend in computer/backend.py.
+import shutil
+import subprocess
+
+CUA_DRIVER_BIN = os.environ.get("CUA_DRIVER_BIN", "cua-driver")
+
+
+def _cua(tool: str, args: dict | None = None) -> dict:
+    """Invoke one cua-driver tool through the running daemon and return its
+    parsed JSON. On failure returns {"error": ...} rather than raising, so the
+    model sees the message and can recover (re-scan, pick a different element)."""
+    exe = shutil.which(CUA_DRIVER_BIN) or CUA_DRIVER_BIN
+    try:
+        proc = subprocess.run(
+            [exe, "call", tool, json.dumps(args or {})],
+            capture_output=True, text=True, timeout=60,
+        )
+    except Exception as e:  # noqa: BLE001
+        return {"error": f"cua-driver {tool} failed to spawn: {type(e).__name__}: {e}"}
+    if proc.returncode != 0:
+        return {"error": (proc.stderr or proc.stdout or "non-zero exit").strip()}
+    out = (proc.stdout or "").strip()
+    if not out:
+        return {"ok": True}
+    try:
+        return json.loads(out)
+    except json.JSONDecodeError:
+        return {"raw": out}
 
 
 @mcp.tool()
@@ -420,17 +443,8 @@ def computer_list_windows(pid: int = 0) -> dict:
 
 
 @mcp.tool()
-async def computer_launch_app(name: str) -> dict:
+def computer_launch_app(name: str) -> dict:
     """Launch a Windows app and return its real pid plus windows[] (each with window_id). Prefer this over list_windows for Store apps (Calculator, Notepad), whose visible window is owned by a frame host. Example: computer_launch_app("calc")."""
-    # SDK primary: launch via shell, then get pid from daemon
-    try:
-        host = await _ensure_sdk()
-        await host.shell.run(f'start "" {name}', timeout=15)
-        await _aio.sleep(1.5)
-        # Get proper pid/window_id from daemon
-        return _cua("list_windows")
-    except Exception:  # noqa: BLE001
-        pass
     return _cua("launch_app", {"name": name})
 
 
@@ -449,20 +463,10 @@ def computer_get_window_state(pid: int, window_id: int,
 
 
 @mcp.tool()
-async def computer_click(pid: int, window_id: int = 0, element_index: int = -1,
-                         x: int = -1, y: int = -1, button: str = "left",
-                         count: int = 1) -> dict:
+def computer_click(pid: int, window_id: int = 0, element_index: int = -1,
+                   x: int = -1, y: int = -1, button: str = "left",
+                   count: int = 1) -> dict:
     """ACT: click. Prefer element_index (from the last get_window_state) for semantic, focus-free clicks; use x,y window-local pixels only when no element covers the target. Re-scan to verify. Example: computer_click(34384, 3342692, element_index=5)."""
-    # SDK primary: coordinate clicks (no element_index)
-    if element_index < 0 and x >= 0 and y >= 0:
-        try:
-            host = await _ensure_sdk()
-            for _ in range(count):
-                await host.mouse.click(x, y, button)
-            return {"ok": True, "path": "sdk", "session": _sdk_session_id}
-        except Exception:  # noqa: BLE001
-            pass  # fall through to daemon
-    # Daemon fallback: pid-scoped, element-indexed
     args: dict = {"pid": pid, "button": button, "count": count}
     if window_id:
         args["window_id"] = window_id
@@ -474,18 +478,9 @@ async def computer_click(pid: int, window_id: int = 0, element_index: int = -1,
 
 
 @mcp.tool()
-async def computer_type_text(pid: int, text: str, window_id: int = 0,
-                             element_index: int = -1) -> dict:
+def computer_type_text(pid: int, text: str, window_id: int = 0,
+                       element_index: int = -1) -> dict:
     """ACT: type `text` into the focused control (or `element_index` if given). Example: computer_type_text(34384, "hello", 3342692)."""
-    # SDK primary: type at current focus (no element targeting)
-    if element_index < 0:
-        try:
-            host = await _ensure_sdk()
-            await host.keyboard.type(text)
-            return {"ok": True, "path": "sdk", "session": _sdk_session_id}
-        except Exception:  # noqa: BLE001
-            pass
-    # Daemon fallback: pid-scoped, element-targeted
     args: dict = {"pid": pid, "text": text}
     if window_id:
         args["window_id"] = window_id
@@ -495,16 +490,8 @@ async def computer_type_text(pid: int, text: str, window_id: int = 0,
 
 
 @mcp.tool()
-async def computer_press_key(pid: int, key: str, window_id: int = 0) -> dict:
+def computer_press_key(pid: int, key: str, window_id: int = 0) -> dict:
     """ACT: press one key, e.g. 'enter', 'escape', 'tab', '='. Example: computer_press_key(34384, "enter")."""
-    # SDK primary: keypress at active window
-    try:
-        host = await _ensure_sdk()
-        await host.keyboard.keypress(key)
-        return {"ok": True, "path": "sdk", "session": _sdk_session_id}
-    except Exception:  # noqa: BLE001
-        pass
-    # Daemon fallback: pid-scoped
     args: dict = {"pid": pid, "key": key}
     if window_id:
         args["window_id"] = window_id
@@ -512,16 +499,8 @@ async def computer_press_key(pid: int, key: str, window_id: int = 0) -> dict:
 
 
 @mcp.tool()
-async def computer_hotkey(pid: int, keys: list[str], window_id: int = 0) -> dict:
+def computer_hotkey(pid: int, keys: list[str], window_id: int = 0) -> dict:
     """ACT: press a key chord, e.g. ['ctrl','s'] or ['alt','F4']. Example: computer_hotkey(34384, ["ctrl","s"])."""
-    # SDK primary: chord at active window
-    try:
-        host = await _ensure_sdk()
-        await host.keyboard.keypress([str(k) for k in keys])
-        return {"ok": True, "path": "sdk", "session": _sdk_session_id}
-    except Exception:  # noqa: BLE001
-        pass
-    # Daemon fallback: pid-scoped
     args: dict = {"pid": pid, "keys": keys}
     if window_id:
         args["window_id"] = window_id
@@ -529,20 +508,9 @@ async def computer_hotkey(pid: int, keys: list[str], window_id: int = 0) -> dict
 
 
 @mcp.tool()
-async def computer_scroll(pid: int, direction: str, window_id: int = 0,
-                          amount: int = 3) -> dict:
+def computer_scroll(pid: int, direction: str, window_id: int = 0,
+                    amount: int = 3) -> dict:
     """ACT: scroll the focused region. direction in up/down/left/right. Example: computer_scroll(34384, "down", amount=5)."""
-    # SDK primary: scroll at screen center with direction→delta mapping
-    try:
-        host = await _ensure_sdk()
-        dx = amount if direction == "right" else (-amount if direction == "left" else 0)
-        dy = amount if direction == "down" else (-amount if direction == "up" else 0)
-        w, h = await host.screen.size()
-        await host.mouse.scroll(w // 2, h // 2, dx, dy)
-        return {"ok": True, "path": "sdk", "session": _sdk_session_id}
-    except Exception:  # noqa: BLE001
-        pass
-    # Daemon fallback: pid-scoped
     args: dict = {"pid": pid, "direction": direction, "amount": amount}
     if window_id:
         args["window_id"] = window_id
@@ -563,33 +531,17 @@ def computer_get_accessibility_tree() -> dict:
 
 
 @mcp.tool()
-async def computer_get_screen_size() -> dict:
+def computer_get_screen_size() -> dict:
     """Return the main display's logical size and backing scale factor. Example: computer_get_screen_size()."""
-    # SDK primary
-    try:
-        host = await _ensure_sdk()
-        w, h = await host.screen.size()
-        return {"width": w, "height": h, "path": "sdk", "session": _sdk_session_id}
-    except Exception:  # noqa: BLE001
-        pass
     return _cua("get_screen_size")
 
 
 @mcp.tool()
-async def computer_double_click(pid: int, window_id: int = 0, element_index: int = -1,
-                                x: float = -1.0, y: float = -1.0,
-                                modifier: list[str] | None = None, dispatch: str = "background",
-                                from_zoom: bool = False) -> dict:
+def computer_double_click(pid: int, window_id: int = 0, element_index: int = -1,
+                          x: float = -1.0, y: float = -1.0,
+                          modifier: list[str] | None = None, dispatch: str = "background",
+                          from_zoom: bool = False) -> dict:
     """ACT: double-click against a target pid. Two addressing modes: element_index + window_id, or x,y window-local pixels. Example: computer_double_click(34384, 3342692, element_index=5)."""
-    # SDK primary: coordinate double-clicks
-    if element_index < 0 and x >= 0 and y >= 0:
-        try:
-            host = await _ensure_sdk()
-            await host.mouse.double_click(int(x), int(y))
-            return {"ok": True, "path": "sdk", "session": _sdk_session_id}
-        except Exception:  # noqa: BLE001
-            pass
-    # Daemon fallback
     args: dict = {"pid": pid, "dispatch": dispatch, "from_zoom": from_zoom}
     if window_id:
         args["window_id"] = window_id
@@ -603,20 +555,11 @@ async def computer_double_click(pid: int, window_id: int = 0, element_index: int
 
 
 @mcp.tool()
-async def computer_right_click(pid: int, window_id: int = 0, element_index: int = -1,
-                               x: float = -1.0, y: float = -1.0,
-                               modifier: list[str] | None = None, dispatch: str = "background",
-                               from_zoom: bool = False) -> dict:
+def computer_right_click(pid: int, window_id: int = 0, element_index: int = -1,
+                         x: float = -1.0, y: float = -1.0,
+                         modifier: list[str] | None = None, dispatch: str = "background",
+                         from_zoom: bool = False) -> dict:
     """ACT: right-click against a target pid. Two addressing modes: element_index + window_id, or x,y window-local pixels. Example: computer_right_click(34384, 3342692, element_index=5)."""
-    # SDK primary: coordinate right-clicks
-    if element_index < 0 and x >= 0 and y >= 0:
-        try:
-            host = await _ensure_sdk()
-            await host.mouse.right_click(int(x), int(y))
-            return {"ok": True, "path": "sdk", "session": _sdk_session_id}
-        except Exception:  # noqa: BLE001
-            pass
-    # Daemon fallback
     args: dict = {"pid": pid, "dispatch": dispatch, "from_zoom": from_zoom}
     if window_id:
         args["window_id"] = window_id
@@ -630,24 +573,22 @@ async def computer_right_click(pid: int, window_id: int = 0, element_index: int 
 
 
 @mcp.tool()
-async def computer_drag(pid: int, from_x: float, from_y: float, to_x: float, to_y: float,
-                        button: str = "left", window_id: int = 0, steps: int = 20,
-                        duration_ms: int = 500, dispatch: str = "background",
-                        from_zoom: bool = False, modifier: list[str] | None = None) -> dict:
+def computer_drag(pid: int, from_x: float, from_y: float, to_x: float, to_y: float,
+                  button: str = "left", window_id: int = 0, steps: int = 20,
+                  duration_ms: int = 500, dispatch: str = "background",
+                  from_zoom: bool = False, modifier: list[str] | None = None) -> dict:
     """ACT: press-drag-release gesture from (from_x, from_y) to (to_x, to_y) in window-local pixels. Example: computer_drag(34384, 100, 100, 200, 200)."""
-    # SDK primary: coordinate drag
-    try:
-        host = await _ensure_sdk()
-        await host.mouse.drag(int(from_x), int(from_y), int(to_x), int(to_y), button)
-        return {"ok": True, "path": "sdk", "session": _sdk_session_id}
-    except Exception:  # noqa: BLE001
-        pass
-    # Daemon fallback
     args: dict = {
-        "pid": pid, "from_x": from_x, "from_y": from_y,
-        "to_x": to_x, "to_y": to_y, "button": button,
-        "steps": steps, "duration_ms": duration_ms,
-        "dispatch": dispatch, "from_zoom": from_zoom,
+        "pid": pid,
+        "from_x": from_x,
+        "from_y": from_y,
+        "to_x": to_x,
+        "to_y": to_y,
+        "button": button,
+        "steps": steps,
+        "duration_ms": duration_ms,
+        "dispatch": dispatch,
+        "from_zoom": from_zoom
     }
     if window_id:
         args["window_id"] = window_id
@@ -666,42 +607,14 @@ def computer_move_cursor(x: float, y: float, cursor_id: str = "") -> dict:
 
 
 @mcp.tool()
-async def computer_get_cursor_position() -> dict:
+def computer_get_cursor_position() -> dict:
     """Return the current mouse cursor position in screen points (origin top-left). Example: computer_get_cursor_position()."""
-    # SDK primary: via cua_auto
-    try:
-        import cua_auto
-        x, y = await _aio.to_thread(cua_auto.screen.cursor_position)
-        return {"x": x, "y": y, "path": "sdk", "session": _sdk_session_id}
-    except Exception:  # noqa: BLE001
-        pass
     return _cua("get_cursor_position")
 
 
 @mcp.tool()
-async def computer_bring_to_front(pid: int, window_id: int = 0) -> dict:
+def computer_bring_to_front(pid: int, window_id: int = 0) -> dict:
     """ACT: activate pid's window (or window_id if specified) -- bring it to the OS foreground. Example: computer_bring_to_front(34384)."""
-    # SDK primary: activate via cua_auto window title matching for pid
-    try:
-        def _do():
-            import cua_auto
-            # Get the window title for this pid, then activate + maximize
-            wins = cua_auto.window.get_all_windows() if hasattr(cua_auto.window, 'get_all_windows') else []
-            for w in wins:
-                try:
-                    if hasattr(w, 'pid') and w.pid == pid:
-                        cua_auto.window.activate_window(w)
-                        cua_auto.window.maximize_window(w)
-                        return True
-                except Exception:  # noqa: BLE001
-                    pass
-            return False
-        activated = await _aio.to_thread(_do)
-        if activated:
-            return {"ok": True, "path": "sdk", "session": _sdk_session_id}
-    except Exception:  # noqa: BLE001
-        pass
-    # Daemon fallback: native bring-to-front by pid
     args: dict = {"pid": pid}
     if window_id:
         args["window_id"] = window_id
@@ -709,19 +622,8 @@ async def computer_bring_to_front(pid: int, window_id: int = 0) -> dict:
 
 
 @mcp.tool()
-async def computer_kill_app(pid: int) -> dict:
+def computer_kill_app(pid: int) -> dict:
     """ACT: force-terminate a process by pid. Example: computer_kill_app(34384)."""
-    # SDK primary: graceful close then force-kill via shell
-    try:
-        host = await _ensure_sdk()
-        cmd = (f'powershell -NoProfile -Command "'
-               f'$p = Get-Process -Id {pid} -ErrorAction SilentlyContinue; '
-               f'if ($p) {{ $p.CloseMainWindow() | Out-Null; Start-Sleep -Seconds 1; '
-               f'if (!$p.HasExited) {{ Stop-Process -Id {pid} -Force }} }}"')
-        await host.shell.run(cmd, timeout=15)
-        return {"ok": True, "path": "sdk", "session": _sdk_session_id}
-    except Exception:  # noqa: BLE001
-        pass
     return _cua("kill_app", {"pid": pid})
 
 
@@ -794,27 +696,14 @@ def computer_install_ffmpeg(confirm: bool = False) -> dict:
 
 
 @mcp.tool()
-async def computer_start_session(session: str) -> dict:
-    """ACT: Declare a session — a named, color-coded identity for THIS agent run. Initialises the SDK connection and notifies the daemon. Example: computer_start_session("research-run-1")."""
-    global _sdk_session_id
-    _sdk_session_id = session
-    # Initialise SDK connection for this session
-    try:
-        await _ensure_sdk()
-    except Exception:  # noqa: BLE001
-        pass  # SDK unavailable; daemon still works
-    # Notify the daemon
+def computer_start_session(session: str) -> dict:
+    """ACT: Declare a session — a named, color-coded identity for THIS agent run. Example: computer_start_session("research-run-1")."""
     return _cua("start_session", {"session": session})
 
 
 @mcp.tool()
-async def computer_end_session(session: str) -> dict:
-    """ACT: End a session declared with start_session. Disconnects SDK, removes agent cursor, stops recording, clears per-session config. Example: computer_end_session("research-run-1")."""
-    global _sdk_session_id
-    _sdk_session_id = None
-    # Tear down SDK connection
-    await _disconnect_sdk()
-    # Notify the daemon
+def computer_end_session(session: str) -> dict:
+    """ACT: End a session declared with start_session. Removes its agent cursor, stops any recording it owns, and clears its per-session config. Example: computer_end_session("research-run-1")."""
     return _cua("end_session", {"session": session})
 
 
