@@ -28,7 +28,7 @@
 - **What Cua does NOT do:** planning, goal decomposition, perception filtering, error
   recovery, vision judgment. **That is our job** — Cua is the low-level tool, we build the agent.
 
-## 3. Three kinds of target application
+## 3. Four kinds of target application
 
 | Type | How to drive it | Notes |
 |------|-----------------|-------|
