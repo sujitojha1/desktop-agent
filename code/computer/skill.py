@@ -24,6 +24,7 @@ V9 gateway tagged `agent="computer"`, exactly as BrowserSkill tags
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 from pathlib import Path
 from typing import Any, Optional
@@ -39,7 +40,14 @@ from browser.client import V9Client
 
 # The named tool surface (#4). Every desktop action dispatches through this
 # registry instead of an inline if/elif, and the registry is enumerable.
-from .tools import ToolContext, front_and_maximize, run_tool, tool_names
+from .tools import (
+    ToolContext,
+    enumerate_windows,
+    front_and_maximize,
+    launch_process,
+    run_tool,
+    tool_names,
+)
 
 
 # ─── action vocabulary (coordinate-based; no element marks) ──────────────────
@@ -230,7 +238,11 @@ class ComputerSkill:
                         except Exception:
                             pass
             if det_actions:
-                steps = prelude + await self._run_deterministic(host, det_actions, app_already_launched=bool(app))
+                # Only treat the app as "already launched" when setup actually
+                # captured a window/PID for it — a failed setup launch must NOT
+                # suppress the deterministic launch step the caller relies on.
+                steps = prelude + await self._run_deterministic(
+                    host, det_actions, app_launched=bool(self.launched_pids))
                 final_title = await self._safe_title(host)
                 return self._pack("deterministic", goal, steps,
                                   content=det_actions[-1].get("note") if det_actions else None,
@@ -284,10 +296,16 @@ class ComputerSkill:
                         await host.shell.run(kill_cmd, timeout=10)
                     except Exception:  # noqa: BLE001
                         pass
-            # End the cua-driver session to clean up the agent cursor/overlay
+            # End the cua-driver session to clean up the agent cursor/overlay.
+            # Process cleanup above is keyed on the captured PIDs; this is the
+            # complementary session-keyed cleanup for the overlay the PID path
+            # can't reach. Build the JSON payload with json.dumps so an unusual
+            # session id (quote/backslash) can't malform the argument.
             try:
-                sess_name = self.session or "default"
-                await host.shell.run(f'cua-driver call end_session "{{\\"session\\": \\"{sess_name}\\"}}"', timeout=10)
+                sess_arg = json.dumps({"session": self.session or "default"})
+                await host.shell.run(
+                    f'cua-driver call end_session "{sess_arg.replace(chr(34), chr(92) + chr(34))}"',
+                    timeout=10)
             except Exception:  # noqa: BLE001
                 pass
             # Small delay before disconnect to let final I/O settle
@@ -374,15 +392,17 @@ class ComputerSkill:
         return await run_tool(a.get("type", ""), a,
                               ToolContext(host, scale_x, scale_y, self.launched_pids))
 
-    async def _run_deterministic(self, host, det_actions, app_already_launched: bool = False) -> list[dict]:
+    async def _run_deterministic(self, host, det_actions, app_launched: bool = False) -> list[dict]:
         steps: list[dict] = []
+        metadata_app = (self._last_app or "").strip().lower()
         for i, a in enumerate(det_actions, start=1):
-            # Skip redundant launch action if the app was already launched during setup
-            if app_already_launched and a.get("type") in ("launch", "launch_app", "open"):
+            # Skip a redundant launch action only when setup actually launched
+            # this same app. Match exactly (not by substring) so a different
+            # app whose name merely contains the setup app — e.g. 'wordpad'
+            # vs. setup 'word' — is still launched.
+            if app_launched and a.get("type") in ("launch", "launch_app", "open"):
                 det_app = str(a.get("app", "") or a.get("value", "")).strip().lower()
-                metadata_app = self._last_app or ""
-                # If target names are empty or match/are substrings of each other, skip it
-                if not det_app or not metadata_app or det_app in metadata_app.lower() or metadata_app.lower() in det_app:
+                if not det_app or det_app == metadata_app:
                     steps.append({"turn": i, "thinking": "deterministic",
                                   "actions": [a], "outcome": "ok: app already launched during setup"})
                     continue
@@ -400,15 +420,11 @@ class ComputerSkill:
 
     # ── helpers ───────────────────────────────────────────────────────────────
     async def _launch(self, host, app: str) -> int | None:
-        """Start an app by name. Returns the process ID if successful, else None."""
-        if not app:
-            return None
-        cmd = f"powershell -NoProfile -Command \"(Start-Process '{app}' -PassThru).Id\""
-        res = await host.shell.run(cmd, timeout=15)
-        stdout = getattr(res, "stdout", "").strip()
-        if stdout.isdigit():
-            return int(stdout)
-        return None
+        """Start an app by name. Returns the process ID if PowerShell reported
+        one, else None (the caller recovers the real PID via enumerate_windows
+        for launcher-stub / UWP apps). Shares one implementation with the
+        `launch` tool — see tools.launch_process."""
+        return await launch_process(host, app)
 
     async def _front_and_maximize(self, title_hint: str) -> str:
         # Delegates to the shared helper, which also backs the bring_to_front

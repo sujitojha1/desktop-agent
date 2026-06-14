@@ -276,16 +276,30 @@ async def _hotkey(ctx, a):
     return "ok"
 
 
+async def launch_process(host, app: str) -> int | None:
+    """Start an app by name via `Start-Process -PassThru` and return its PID if
+    PowerShell reported one, else None. Shared by the `launch` tool and
+    ComputerSkill's setup launch so the command/parse logic lives in one place.
+
+    Note: for some store/UWP apps (e.g. 'calc' on Win 11) the PID returned is a
+    short-lived launcher stub, so the real window PID must be recovered via
+    `enumerate_windows`; callers should treat None / a stale PID as "fall back to
+    title-based tracking", not as a launch failure."""
+    if not app:
+        return None
+    cmd = f"powershell -NoProfile -Command \"(Start-Process '{app}' -PassThru).Id\""
+    res = await host.shell.run(cmd, timeout=15)
+    stdout = getattr(res, "stdout", "").strip()
+    return int(stdout) if stdout.isdigit() else None
+
+
 async def _launch(ctx, a):
     app = str(a.get("app", "") or a.get("value", ""))
     if not app:
         return "error: launch needs app"
-    cmd = f"powershell -NoProfile -Command \"(Start-Process '{app}' -PassThru).Id\""
-    res = await ctx.host.shell.run(cmd, timeout=15)
-    stdout = getattr(res, "stdout", "").strip()
+    pid = await launch_process(ctx.host, app)
     pid_str = ""
-    if stdout.isdigit():
-        pid = int(stdout)
+    if pid:
         ctx.launched_pids.add(pid)
         pid_str = f" (PID {pid})"
     await asyncio.sleep(1.0)
