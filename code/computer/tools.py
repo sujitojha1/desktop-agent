@@ -44,7 +44,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
 
 
@@ -57,6 +57,7 @@ class ToolContext:
     host: Any
     scale_x: float = 1.0
     scale_y: float = 1.0
+    launched_pids: set[int] = field(default_factory=set)
 
     def scaled_xy(self, x, y, *, default_center: bool = False):
         if x is None or y is None:
@@ -106,11 +107,65 @@ async def run_tool(name: str, args: dict | None, ctx: ToolContext) -> str:
     """Look up `name` and execute its handler. Returns an outcome string
     ("ok" / "ok: …" / "error: …"); never raises — handler exceptions are
     folded into an error string so the cascade loop can record and continue."""
+    if args is None:
+        args = {}
+    else:
+        args = dict(args)
+
+    # Normalize tool name aliases
+    name = name.lower().strip()
+    aliases = {
+        "keys": "type",
+        "type_text": "type",
+        "write": "type",
+        "text": "type",
+        "press": "key",
+        "press_key": "key",
+        "launch_app": "launch",
+        "open": "launch",
+        "kill": "kill_app",
+        "click_at": "click",
+        "double_click_at": "double_click",
+        "right_click_at": "right_click",
+    }
+    name = aliases.get(name, name)
+
+    # Normalize argument key aliases
+    if name == "type":
+        val = args.get("value") or args.get("keys") or args.get("text") or ""
+        if isinstance(val, list):
+            val = "".join(str(v) for v in val)
+        args["value"] = val
+    elif name == "key":
+        val = args.get("value") or args.get("keys") or args.get("key") or ""
+        if isinstance(val, list):
+            val = val[0] if val else ""
+        args["value"] = val
+
+        # If it's a multi-character sequence and not a special key, treat it as a type tool!
+        val_str = str(val)
+        special_keys = {
+            "enter", "return", "escape", "esc", "tab", "backspace", "space", "delete", "del",
+            "insert", "ins", "home", "end", "pageup", "pgup", "pagedown", "pgdn", "up", "down",
+            "left", "right", "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11", "f12",
+            "ctrl", "alt", "shift", "win", "capslock", "numlock", "scrolllock", "pause", "printscreen"
+        }
+        if len(val_str) > 1 and val_str.lower() not in special_keys:
+            name = "type"
+            args["value"] = val_str
+    elif name == "hotkey":
+        val = args.get("keys") or args.get("value") or []
+        if isinstance(val, str):
+            val = [val]
+        args["keys"] = val
+    elif name in ("launch", "kill_app"):
+        args["app"] = args.get("app") or args.get("value") or ""
+
     spec = TOOLS.get(name)
     if not spec:
         return f"error: unknown tool {name!r}"
     try:
-        return await spec.handler(ctx, args or {})
+        return await spec.handler(ctx, args)
     except Exception as e:                                     # noqa: BLE001
         return f"error: {type(e).__name__}: {e}"
 
@@ -225,9 +280,16 @@ async def _launch(ctx, a):
     app = str(a.get("app", "") or a.get("value", ""))
     if not app:
         return "error: launch needs app"
-    await ctx.host.shell.run(f'start "" {app}', timeout=15)
+    cmd = f"powershell -NoProfile -Command \"(Start-Process '{app}' -PassThru).Id\""
+    res = await ctx.host.shell.run(cmd, timeout=15)
+    stdout = getattr(res, "stdout", "").strip()
+    pid_str = ""
+    if stdout.isdigit():
+        pid = int(stdout)
+        ctx.launched_pids.add(pid)
+        pid_str = f" (PID {pid})"
     await asyncio.sleep(1.0)
-    return f"ok: launched {app}"
+    return f"ok: launched {app}{pid_str}"
 
 
 async def _kill_app(ctx, a):

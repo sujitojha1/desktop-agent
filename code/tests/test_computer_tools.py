@@ -85,6 +85,23 @@ def test_type_and_key_route_to_keyboard():
     ]
 
 
+def test_tool_alias_normalization():
+    host = _Recorder()
+    ctx = ToolContext(host=host)
+    # Test "press" alias mapping to "key"
+    asyncio.run(run_tool("press", {"keys": "Enter"}, ctx))
+    # Test "keys" alias mapping to "type"
+    asyncio.run(run_tool("keys", {"value": "125*8="}, ctx))
+    # Test multi-character key being normalized to type
+    asyncio.run(run_tool("key", {"value": "125"}, ctx))
+    
+    assert host.calls == [
+        ("keyboard.keypress", ("Enter",), {}),
+        ("keyboard.type", ("125*8=",), {}),
+        ("keyboard.type", ("125",), {}),
+    ]
+
+
 def test_missing_coords_is_validation_error_not_crash():
     ctx = ToolContext(host=_Recorder())
     out = asyncio.run(run_tool("click", {}, ctx))
@@ -135,3 +152,11 @@ def test_list_windows_title_filter_is_case_insensitive():
 def test_list_windows_tool_dispatch_reports_count():
     out = asyncio.run(run_tool("list_windows", {}, ToolContext(host=_ShellHost(_TWO))))
     assert out.startswith("ok: 2 window(s)") and "Calculator" in out
+
+
+def test_launch_tool_captures_pid():
+    ctx = ToolContext(host=_ShellHost("1234"))
+    out = asyncio.run(run_tool("launch", {"app": "calc"}, ctx))
+    assert "ok: launched calc (PID 1234)" in out
+    assert ctx.launched_pids == {1234}
+

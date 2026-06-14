@@ -64,8 +64,11 @@ structured records the Formatter can render cleanly.
                      125 * 8, and verify the result on screen").
                      metadata MAY set: app (str, app to launch first,
                      e.g. "calc", "notepad"), actions (list[dict],
-                     deterministic steps to run before the vision loop),
-                     max_steps (int, vision loop cap, default 12).
+                     deterministic steps to run before the vision loop,
+                     each action must be one of: click(x, y), double_click(x, y),
+                     right_click(x, y), move(x, y), drag(from_x, from_y, to_x, to_y),
+                     scroll(x, y, dx, dy), type(value), key(value), hotkey(keys),
+                     launch(app), wait(seconds)), max_steps (int, vision loop cap, default 12).
                      Do NOT list USER_QUERY in its inputs — pass the task
                      goal via `metadata.goal` instead to avoid confusion.
 

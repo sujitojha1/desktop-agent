@@ -152,6 +152,8 @@ class ComputerSkill:
         # Forwarded to V9 so the gateway ledger attributes each call to the
         # orchestrator session that drove it.
         self.session = session
+        self.launched_pids: set[int] = set()
+        self._last_app: str | None = None
 
     # ── public entry point ─────────────────────────────────────────────────
     async def run(self, node: NodeSpec) -> AgentResult:
@@ -177,7 +179,7 @@ class ComputerSkill:
         # `finally` guarantee disconnect even on a mid-run exception.
         host = await cua.Localhost.connect()
         prelude: list[dict] = []
-        launched_pids: set[int] = set()
+        self._last_app = app
         try:
             # Track PIDs before launching to identify the new process
             pids_before = set()
@@ -188,7 +190,9 @@ class ComputerSkill:
 
             # ── Layer 1: deterministic ──────────────────────────────────────
             if app:
-                await self._launch(host, app)
+                pid = await self._launch(host, app)
+                if pid:
+                    self.launched_pids.add(pid)
                 # Give a freshly-launched window time to realize before we try
                 # to find + maximize it; a 1 s wait was too short and the
                 # maximize landed on a not-yet-visible window.
@@ -198,9 +202,9 @@ class ComputerSkill:
                 try:
                     pids_after = await enumerate_windows(host)
                     for w in pids_after:
-                        pid = w.get("pid")
-                        if pid and pid not in pids_before:
-                            launched_pids.add(pid)
+                        wpid = w.get("pid")
+                        if wpid and wpid not in pids_before:
+                            self.launched_pids.add(wpid)
                 except Exception:
                     pass
 
@@ -216,17 +220,17 @@ class ComputerSkill:
                                     "actions": [{"type": "front_maximize", "value": title_hint}],
                                     "outcome": outcome})
                     await asyncio.sleep(0.6)
-                    # If launched_pids is still empty, try to match by title_hint
-                    if not launched_pids:
+                    # If self.launched_pids is still empty, try to match by title_hint
+                    if not self.launched_pids:
                         try:
                             matching_wins = await enumerate_windows(host, title_hint)
                             for w in matching_wins:
                                 if w.get("pid"):
-                                    launched_pids.add(w["pid"])
+                                    self.launched_pids.add(w["pid"])
                         except Exception:
                             pass
             if det_actions:
-                steps = prelude + await self._run_deterministic(host, det_actions)
+                steps = prelude + await self._run_deterministic(host, det_actions, app_already_launched=bool(app))
                 final_title = await self._safe_title(host)
                 return self._pack("deterministic", goal, steps,
                                   content=det_actions[-1].get("note") if det_actions else None,
@@ -255,8 +259,8 @@ class ComputerSkill:
                                     elapsed=time.time() - t0)
         finally:
             # Fix 4: graceful close → wait → fallback force-kill → delay
-            if launched_pids:
-                for pid in launched_pids:
+            if self.launched_pids:
+                for pid in self.launched_pids:
                     try:
                         # Step 1: ask the window to close gracefully
                         close_cmd = (
@@ -270,7 +274,7 @@ class ComputerSkill:
                 # Give windows time to animate closed
                 await asyncio.sleep(2.0)
                 # Step 2: force-kill any that survived (unsaved-dialog, etc.)
-                for pid in launched_pids:
+                for pid in self.launched_pids:
                     try:
                         kill_cmd = (
                             f'powershell -NoProfile -Command "'
@@ -280,6 +284,12 @@ class ComputerSkill:
                         await host.shell.run(kill_cmd, timeout=10)
                     except Exception:  # noqa: BLE001
                         pass
+            # End the cua-driver session to clean up the agent cursor/overlay
+            try:
+                sess_name = self.session or "default"
+                await host.shell.run(f'cua-driver call end_session "{{\\"session\\": \\"{sess_name}\\"}}"', timeout=10)
+            except Exception:  # noqa: BLE001
+                pass
             # Small delay before disconnect to let final I/O settle
             await asyncio.sleep(1.0)
             try:
@@ -362,11 +372,21 @@ class ComputerSkill:
         """Execute one action through the named tool registry (computer/tools.py).
         The action's `type` is the tool name; the action dict is its arguments."""
         return await run_tool(a.get("type", ""), a,
-                              ToolContext(host, scale_x, scale_y))
+                              ToolContext(host, scale_x, scale_y, self.launched_pids))
 
-    async def _run_deterministic(self, host, det_actions) -> list[dict]:
+    async def _run_deterministic(self, host, det_actions, app_already_launched: bool = False) -> list[dict]:
         steps: list[dict] = []
         for i, a in enumerate(det_actions, start=1):
+            # Skip redundant launch action if the app was already launched during setup
+            if app_already_launched and a.get("type") in ("launch", "launch_app", "open"):
+                det_app = str(a.get("app", "") or a.get("value", "")).strip().lower()
+                metadata_app = self._last_app or ""
+                # If target names are empty or match/are substrings of each other, skip it
+                if not det_app or not metadata_app or det_app in metadata_app.lower() or metadata_app.lower() in det_app:
+                    steps.append({"turn": i, "thinking": "deterministic",
+                                  "actions": [a], "outcome": "ok: app already launched during setup"})
+                    continue
+
             try:
                 outcome = await self._dispatch(host, a, 1.0, 1.0)
             except Exception as e:                            # noqa: BLE001
@@ -379,12 +399,16 @@ class ComputerSkill:
         return steps
 
     # ── helpers ───────────────────────────────────────────────────────────────
-    async def _launch(self, host, app: str) -> None:
-        """Start an app by name. cua.Localhost.window has no launch(), so we go
-        through the shell. `start` returns immediately on Windows."""
+    async def _launch(self, host, app: str) -> int | None:
+        """Start an app by name. Returns the process ID if successful, else None."""
         if not app:
-            return
-        await host.shell.run(f'start "" {app}', timeout=15)
+            return None
+        cmd = f"powershell -NoProfile -Command \"(Start-Process '{app}' -PassThru).Id\""
+        res = await host.shell.run(cmd, timeout=15)
+        stdout = getattr(res, "stdout", "").strip()
+        if stdout.isdigit():
+            return int(stdout)
+        return None
 
     async def _front_and_maximize(self, title_hint: str) -> str:
         # Delegates to the shared helper, which also backs the bring_to_front
