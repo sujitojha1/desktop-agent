@@ -1,0 +1,42 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Computer-use app launch registry.
+#
+# Maps a friendly app name (what the planner / vision model emits in a `launch`
+# action, or what arrives as NodeSpec metadata.app) to a concrete launch target
+# that the cua.Localhost shell hands to `Start-Process`. This keeps the launch
+# surface GENERIC and DATA-DRIVEN: to teach the agent a new app, add an entry
+# here — no Python change. Names not found here fall through and are launched
+# verbatim (so `calc`, `notepad`, etc. still work without an entry).
+#
+# Per-app fields:
+#   target        REQUIRED. What Start-Process launches — either a bare command
+#                 on PATH (e.g. `calc`) or an absolute path to the .exe.
+#   aliases       OPTIONAL. Extra names that resolve to this entry. Matching is
+#                 case-insensitive and whitespace-collapsed across key+aliases.
+#   window_title  OPTIONAL. Substring used to find + maximize the window after
+#                 launch (front_and_maximize). Defaults to the entry key.
+#   args          OPTIONAL. Argument string passed to the target (e.g. a file
+#                 to open, a `--flag`).
+# ─────────────────────────────────────────────────────────────────────────────
+apps:
+  calculator:
+    target: calc
+    aliases: [calc, calculator]
+    window_title: Calculator
+
+  excel:
+    target: C:\Program Files\Microsoft Office\root\Office16\EXCEL.EXE
+    aliases: [ms excel, microsoft excel, xlsx]
+    window_title: Excel
+
+  canva:
+    target: C:\Users\gayad\AppData\Local\Programs\Canva\Canva.exe
+    aliases: [canva app]
+    window_title: Canva
+
+  vscode:
+    target: C:\Users\gayad\AppData\Local\Programs\Microsoft VS Code\Code.exe
+    aliases: [vs code, visual studio code, code]
+    window_title: Visual Studio Code
+
+  # ── add more apps below following the same shape ──

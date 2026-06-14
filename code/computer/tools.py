@@ -29,12 +29,12 @@ Coverage vs cua-driver's 34 tools (verified 2026-06-14, Windows 11):
     list_windows          -> cua_auto.window.get_windows_with_title (title-scoped)
     zoom                  -> crop of screen.screenshot
     screenshot (get_window_state, screenshot mode) -> screen.screenshot_base64
+    list_apps             -> computer/apps.yaml registry (app_registry.list_apps)
     wait                  -> asyncio.sleep  (utility; not a cua-driver tool)
 
   N/A — needs a layer the SDK lacks (tracked in #3, out of scope for #4):
     get_accessibility_tree / get_window_state (AX)          -> needs AX/UIA
     set_value                                               -> needs AX/UIA targeting
-    list_apps                                               -> needs app enumeration
     page (CDP DOM)                                          -> needs CDP
     start/end_session + agent-cursor overlay (x7)           -> not in SDK
     start/stop/get_recording, replay_trajectory (x4)        -> needs recording layer
@@ -46,6 +46,9 @@ import asyncio
 import json
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
+
+from .app_registry import list_apps as _registry_apps
+from .app_registry import resolve_app
 
 
 # ── execution context ────────────────────────────────────────────────────────
@@ -281,13 +284,26 @@ async def launch_process(host, app: str) -> int | None:
     PowerShell reported one, else None. Shared by the `launch` tool and
     ComputerSkill's setup launch so the command/parse logic lives in one place.
 
+    The friendly `app` name is resolved through the data-driven registry
+    (computer/apps.yaml) — so 'excel' becomes its absolute EXE path — and falls
+    through to the raw name when the registry has no entry (`calc`, `notepad`).
+
     Note: for some store/UWP apps (e.g. 'calc' on Win 11) the PID returned is a
     short-lived launcher stub, so the real window PID must be recovered via
     `enumerate_windows`; callers should treat None / a stale PID as "fall back to
     title-based tracking", not as a launch failure."""
     if not app:
         return None
-    cmd = f"powershell -NoProfile -Command \"(Start-Process '{app}' -PassThru).Id\""
+    entry = resolve_app(app)
+    target = entry.target if entry else app
+    args = entry.args if entry else ""
+    # Single-quote and double up any embedded quote (PowerShell's '' escape) so
+    # spaces in absolute paths survive and the argument can't be broken out of.
+    parts = [f"-FilePath '{target.replace(chr(39), chr(39) * 2)}'"]
+    if args:
+        parts.append(f"-ArgumentList '{args.replace(chr(39), chr(39) * 2)}'")
+    parts.append("-PassThru")
+    cmd = f"powershell -NoProfile -Command \"(Start-Process {' '.join(parts)}).Id\""
     res = await host.shell.run(cmd, timeout=15)
     stdout = getattr(res, "stdout", "").strip()
     return int(stdout) if stdout.isdigit() else None
@@ -358,6 +374,15 @@ async def _list_windows(ctx, a):
     wins = await enumerate_windows(ctx.host, title)
     suffix = f" matching {title!r}" if title else ""
     return f"ok: {len(wins)} window(s){suffix}: {json.dumps(wins)}"
+
+
+async def _list_apps(ctx, a):
+    """Enumerate the apps configured in apps.yaml — the launchable surface the
+    agent can `launch` by friendly name. (Was N/A pre-registry: needed an app
+    catalogue, which the config now supplies.)"""
+    apps = [{"name": e.name, "target": e.target, "window_title": e.window_title}
+            for e in _registry_apps()]
+    return f"ok: {len(apps)} app(s): {json.dumps(apps)}"
 
 
 async def _get_screen_size(ctx, a):
@@ -431,6 +456,10 @@ _reg("list_windows",
      "List all visible top-level windows (pid + title). Optional `title` "
      "filters case-insensitively.",
      _obj({"title": {"type": "string"}}), _list_windows)
+_reg("list_apps",
+     "List the apps configured in apps.yaml (friendly name + launch target) "
+     "that `launch` can start by name.",
+     _obj({}), _list_apps)
 _reg("get_screen_size", "Return the logical screen size (w, h).", _obj({}), _get_screen_size)
 _reg("get_cursor_position", "Return the current cursor (x, y).", _obj({}), _get_cursor_position)
 _reg("screenshot", "Capture the screen (base64 PNG) — perception for the vision layer.",

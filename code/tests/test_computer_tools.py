@@ -26,7 +26,7 @@ from computer.tools import (
 EXPECTED = {
     "click", "double_click", "right_click", "move", "drag", "scroll",
     "type", "key", "hotkey", "launch", "kill_app", "bring_to_front",
-    "list_windows", "get_screen_size", "get_cursor_position",
+    "list_windows", "list_apps", "get_screen_size", "get_cursor_position",
     "screenshot", "zoom", "wait",
 }
 
@@ -159,4 +159,64 @@ def test_launch_tool_captures_pid():
     out = asyncio.run(run_tool("launch", {"app": "calc"}, ctx))
     assert "ok: launched calc (PID 1234)" in out
     assert ctx.launched_pids == {1234}
+
+
+# ── app launch registry (apps.yaml) ──────────────────────────────────────────
+from computer.app_registry import list_apps as registry_apps
+from computer.app_registry import load_registry, resolve_app
+
+
+def test_registry_resolves_key_alias_and_case():
+    # Shipped entries: calculator (alias 'calc') and excel (alias 'ms excel').
+    assert resolve_app("calculator").target == "calc"
+    assert resolve_app("CALC").name == "calculator"
+    assert resolve_app("  ms  excel ").name == "excel"          # space-collapsed
+    assert resolve_app("nonesuch") is None                       # unknown → None
+    assert resolve_app("") is None
+
+
+def test_registry_carries_window_title_default():
+    assert resolve_app("excel").window_title == "Excel"
+
+
+def test_list_apps_deduplicates_across_aliases():
+    names = {e.name for e in registry_apps()}
+    assert {"calculator", "excel"} <= names
+    # calculator has 2 aliases but appears once in the distinct listing.
+    assert sum(e.name == "calculator" for e in registry_apps()) == 1
+
+
+def test_launch_resolves_registry_target_into_command():
+    # 'excel' must resolve to its absolute EXE path in the Start-Process call,
+    # not be launched verbatim. _CmdCapture records the shell command.
+    class _CmdCapture:
+        def __init__(self):
+            self.cmd = ""
+
+        @property
+        def shell(self):
+            outer = self
+
+            class _Shell:
+                async def run(self, command, timeout=20, background=False):
+                    outer.cmd = command
+                    return type("R", (), {"stdout": "999", "stderr": "",
+                                          "returncode": 0, "success": True})()
+            return _Shell()
+
+    host = _CmdCapture()
+    ctx = ToolContext(host=host)
+    asyncio.run(run_tool("launch", {"app": "excel"}, ctx))
+    assert "EXCEL.EXE" in host.cmd and "-FilePath" in host.cmd
+    assert ctx.launched_pids == {999}
+
+
+def test_list_apps_tool_reports_configured_apps():
+    out = asyncio.run(run_tool("list_apps", {}, ToolContext(host=None)))
+    assert out.startswith("ok:") and "calculator" in out and "excel" in out
+
+
+def test_unknown_app_falls_through_to_raw_name():
+    load_registry(force=True)  # ensure fresh registry
+    assert resolve_app("notepad") is None  # not configured → launched verbatim
 

@@ -221,7 +221,15 @@ class ComputerSkill:
                 # in desktop clutter. cua.Localhost.window can only read the
                 # active title, so we drop to the synchronous cua_auto backend
                 # (wrapped in to_thread) for the activate/maximize it omits.
-                title_hint = node.metadata.get("window_title") or await self._safe_title(host)
+                # window_title precedence: explicit metadata → registry default
+                # for this app (apps.yaml) → the active-window title as last
+                # resort. Lets a configured app maximize reliably without the
+                # caller having to know its window title.
+                from .app_registry import resolve_app
+                entry = resolve_app(app)
+                title_hint = (node.metadata.get("window_title")
+                              or (entry.window_title if entry else None)
+                              or await self._safe_title(host))
                 if title_hint:
                     outcome = await self._front_and_maximize(title_hint)
                     prelude.append({"turn": 0, "thinking": "setup: front + maximize",
