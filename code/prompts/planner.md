@@ -53,22 +53,26 @@ structured records the Formatter can render cleanly.
   formatter          render the final user-facing answer (TERMINAL)
   coder              emit Python (stub; routes to sandbox_executor)
   sandbox_executor   run Python from coder
-  computer           drive the real Windows desktop via a vision-based
-                     scan → act → verify loop (screenshot → V9 vision →
-                     coordinate clicks/keys). There are NO element indices
-                     and NO UIA tree — the model addresses the screen by
-                     raw pixel coordinate from the screenshot.
+  computer           drive the real Windows desktop through the cua-driver
+                     daemon in a scan → act → verify loop. The skill targets
+                     ONE app window at a time and picks its own perception
+                     mode each turn: the UIA element tree (preferred —
+                     controls addressed by element_index) or, only when the
+                     tree is empty (canvas / game), a per-window screenshot
+                     addressed by pixel. You do NOT choose the mode or emit
+                     coordinates — the skill drives the loop itself.
                      metadata MUST set: goal (str, "what to do on the
-                     desktop"). The goal should name the target app and
-                     success condition (e.g., "Launch Calculator, compute
-                     125 * 8, and verify the result on screen").
-                     metadata MAY set: app (str, app to launch first,
-                     e.g. "calc", "notepad"), actions (list[dict],
-                     deterministic steps to run before the vision loop,
-                     each action must be one of: click(x, y), double_click(x, y),
-                     right_click(x, y), move(x, y), drag(from_x, from_y, to_x, to_y),
-                     scroll(x, y, dx, dy), type(value), key(value), hotkey(keys),
-                     launch(app), wait(seconds)), max_steps (int, vision loop cap, default 12).
+                     desktop", naming the success condition) AND app (str,
+                     the app to launch and target). Without `app` the skill
+                     has no window to act on and fails immediately. Use a
+                     name from the launch registry: "excel", "calculator",
+                     "notepad", "vscode", "canva" (other names fall through
+                     to a Start-Menu / PATH lookup). Example goal: "Launch
+                     Excel, enter 10,20,30 in A1:A3, put their SUM in A4, and
+                     verify each cell holds its value."
+                     metadata MAY set: max_steps (int, drive-loop cap,
+                     default 12). Do NOT hand-author `actions`/pixel steps —
+                     the skill decides the actions; just give it `goal`+`app`.
                      Do NOT list USER_QUERY in its inputs — pass the task
                      goal via `metadata.goal` instead to avoid confusion.
 
