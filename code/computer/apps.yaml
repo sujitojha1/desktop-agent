@@ -35,7 +35,7 @@ apps:
     window_title: Canva
 
   vscode:
-    target: C:\Users\gayad\AppData\Local\Programs\Microsoft VS Code\Code.exe
+    target: code
     aliases: [vs code, visual studio code, code]
     window_title: Visual Studio Code
 
