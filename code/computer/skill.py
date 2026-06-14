@@ -85,6 +85,7 @@ ACTION_SCHEMA: dict = {
                     "button": {"type": "string"},
                     "count": {"type": "integer"},
                     "value": {"type": "string"},
+                    "commit": {"type": "string", "enum": ["enter", "tab"]},
                     "keys": {"type": "array", "items": {"type": "string"}},
                     "modifiers": {"type": "array", "items": {"type": "string"}},
                     "direction": {"type": "string"},
@@ -99,6 +100,31 @@ ACTION_SCHEMA: dict = {
     },
 }
 
+# Verification gate (issue #21, root cause #3): a model's `done(success=true)` is
+# not trusted on its own word — we re-scan the live window and have the model
+# judge whether the goal is ACTUALLY satisfied by what's on screen now.
+VERIFY_SCHEMA: dict = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["verified", "reason"],
+    "properties": {
+        "verified": {"type": "boolean"},
+        "reason": {"type": "string",
+                   "description": "what you observed; if false, what is wrong/missing"},
+    },
+}
+
+SYSTEM_PROMPT_VERIFY = (
+    "You are a strict verifier for a desktop-automation agent. You are given a "
+    "goal and the CURRENT state of one app window (its accessibility tree or a "
+    "screenshot). Decide whether the goal is ALREADY and FULLY satisfied by the "
+    "state shown — judge the result, not the attempt. Read the actual values: "
+    "cell contents, field text, computed results. Be skeptical — a cell still in "
+    "edit mode, values concatenated into one cell, blank target cells, or an "
+    "uncomputed/typed-but-not-entered formula all mean verified=false. Set "
+    "verified=true only when every required value is present and correct."
+)
+
 SYSTEM_PROMPT_TREE = (
     "You are a desktop-driving agent operating one Windows app window through its "
     "accessibility (UIA) tree. Each turn you receive the window's element tree: "
@@ -107,7 +133,7 @@ SYSTEM_PROMPT_TREE = (
     "Make progress toward the goal by emitting a short list of actions:\n"
     "  click {element_index}            — invoke a control\n"
     "  double_click / right_click {element_index}\n"
-    "  type {value}                     — type into the focused field (optionally element_index)\n"
+    "  type {value, commit?}            — type into the focused field; commit 'enter'/'tab' to commit in the same action\n"
     "  set_value {element_index, value} — set a field/slider/combo directly\n"
     "  key {value}                      — one key: 'enter','escape','tab',…\n"
     "  hotkey {keys}                    — chord, e.g. ['ctrl','s']\n"
@@ -116,13 +142,14 @@ SYSTEM_PROMPT_TREE = (
     "  wait {seconds}                   — let the UI settle\n"
     "  done {success, note}             — finish; success=true if the goal is met\n"
     "Prefer one decisive action and re-read the next scan. Be terse in `thinking`.\n"
-    "GRID / SPREADSHEET DATA ENTRY (Excel, tables): to put a value in a specific "
-    "cell, prefer `set_value {element_index, value}` on that cell — it writes "
-    "directly and commits, so values never run together. If you must `type`, you "
-    "MUST commit each entry with `key enter` (Enter commits and moves down one "
-    "cell) before typing the next value. Never emit several `type` actions in a "
-    "row without an `enter`/`tab` between them — the characters concatenate into "
-    "the one active cell.\n"
+    "GRID / SPREADSHEET DATA ENTRY (Excel, tables): put each value in with "
+    "`type {value, commit:'enter'}` — the commit is part of the same action, so "
+    "Enter commits the cell and moves down one row and the next value can never "
+    "append into a still-open cell. (Use commit:'tab' to move right instead.) "
+    "Excel grid cells do NOT support `set_value` (no UIA ValuePattern), so don't "
+    "rely on it there. Never emit a bare `type` for a cell and leave the commit "
+    "to a later action/turn — the characters concatenate into the one active "
+    "cell (10 then 20 → \"1020\").\n"
     "VERIFY BEFORE DONE: only emit `done(success=true)` after the latest element "
     "tree actually shows the goal met (e.g. each target cell holds its expected "
     "value / computed result). If the scan doesn't confirm it, keep working or "
@@ -166,6 +193,7 @@ class ComputerSkill:
                  artifacts_root: str | None = None,
                  max_steps: int = 12,
                  max_failures: int = 3,
+                 max_done_rejections: int = 2,
                  pause_between_steps: float = 0.4,
                  session: str | None = None):
         self.gateway_url = gateway_url
@@ -174,6 +202,7 @@ class ComputerSkill:
         self.artifacts_root = Path(artifacts_root) if artifacts_root else None
         self.max_steps = max_steps
         self.max_failures = max_failures
+        self.max_done_rejections = max_done_rejections
         self.pause_between_steps = pause_between_steps
         self.session = session
 
@@ -252,6 +281,7 @@ class ComputerSkill:
                      prelude: list[dict] | None = None):
         steps: list[dict] = list(prelude or [])
         failures = 0
+        rejected_dones = 0
         for turn in range(1, max_steps + 1):
             # SCAN — tree + screenshot in one call.
             state = await scan(ctx, capture_mode="som")
@@ -324,7 +354,21 @@ class ComputerSkill:
             else:
                 failures = 0
             if done_seen:
-                return steps, success_seen, done_note
+                # A self-reported failure is taken at face value; a claimed
+                # success must survive a fresh re-scan (issue #21, root cause #3).
+                if not success_seen:
+                    return steps, False, done_note
+                verified, vnote = await self._verify(ctx, goal, client, done_note)
+                if verified:
+                    return steps, True, done_note
+                rejected_dones += 1
+                steps.append({"turn": turn, "path": "verify", "thinking": "",
+                              "actions": [],
+                              "outcome": f"verify: REJECTED done(success=true) — {vnote}"})
+                if rejected_dones >= self.max_done_rejections:
+                    return steps, False, f"unverified after {rejected_dones} done attempt(s): {vnote}"
+                # Otherwise keep driving — the next turn sees the rejection in
+                # history and can actually fix the state before claiming done.
         return steps, False, f"step cap reached ({max_steps})"
 
     async def _apply(self, ctx, actions):
@@ -342,6 +386,42 @@ class ComputerSkill:
                 break
             await asyncio.sleep(self.pause_between_steps)
         return outcomes, False, False, ""
+
+    async def _verify(self, ctx, goal, client, done_note):
+        """Re-scan the live window and ask the model whether `goal` is actually
+        satisfied by what's on screen NOW — the programmatic gate behind a
+        `done(success=true)` so a model can't claim a success it can't see
+        (issue #21, root cause #3). Returns (verified: bool, reason: str). Any
+        inability to perceive the result counts as unverified, not success."""
+        state = await scan(ctx, capture_mode="som")
+        if driver.is_error(state):
+            return False, f"window unreadable ({driver.error_text(state)})"
+        claim = f' The agent claims: "{done_note}".' if done_note else ""
+        ask = ("Is the goal fully satisfied by what is visible NOW? Inspect the "
+               "actual values; verified=true only if every required result is "
+               "present and correct.")
+        if int(state.get("element_count") or 0) > 0:
+            prompt = (f"GOAL: {goal}\n{claim}\n\nWINDOW ELEMENT TREE:\n"
+                      f"{self._trim(state.get('tree_markdown', ''))}\n\n{ask}")
+            result = await client.chat(
+                prompt, system=SYSTEM_PROMPT_VERIFY, schema=VERIFY_SCHEMA,
+                schema_name="VerifyResult", max_tokens=512,
+                provider=self.vision_provider_pin)
+        else:
+            data_url = self._data_url(state)
+            if not data_url:
+                return False, "nothing to perceive (empty tree, no screenshot)"
+            w, h = state.get("screenshot_width"), state.get("screenshot_height")
+            prompt = (f"GOAL: {goal}\n{claim}\n\nSCREEN: {w}x{h} pixels "
+                      f"(origin top-left)\n\n{ask}")
+            result = await client.vision(
+                data_url, prompt, system=SYSTEM_PROMPT_VERIFY, schema=VERIFY_SCHEMA,
+                schema_name="VerifyResult", max_tokens=512,
+                provider=self.vision_provider_pin)
+        parsed = result.parsed
+        if not parsed:
+            return False, "verifier returned no parseable result"
+        return bool(parsed.get("verified")), str(parsed.get("reason", ""))
 
     async def _run_deterministic(self, ctx, det_actions) -> list[dict]:
         steps: list[dict] = []

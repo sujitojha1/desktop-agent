@@ -125,6 +125,25 @@ def test_type_maps_to_type_text(monkeypatch):
     assert rec.calls == [("type_text", {"pid": 7, "text": "hi"})]
 
 
+def test_type_commit_presses_key_in_same_action(monkeypatch):
+    # `commit` folds the cell-commit into the type so it can't be split off into
+    # a later turn (the cause of "1020"-style concatenation in grid cells).
+    rec = _install(monkeypatch)
+    assert _run(run_tool("type", {"value": "10", "commit": "enter"},
+                         ToolContext(pid=7))) == "ok"
+    assert rec.calls == [("type_text", {"pid": 7, "text": "10"}),
+                         ("press_key", {"pid": 7, "key": "enter"})]
+
+
+def test_type_commit_skipped_when_type_errors(monkeypatch):
+    # A failed type must not commit an empty/garbage cell.
+    rec = _install(monkeypatch, {"type_text": {"error": "no_focus"}})
+    out = _run(run_tool("type", {"value": "10", "commit": "enter"},
+                        ToolContext(pid=7)))
+    assert out.startswith("error:")
+    assert rec.calls == [("type_text", {"pid": 7, "text": "10"})]
+
+
 def test_type_alias_and_element_index(monkeypatch):
     rec = _install(monkeypatch)
     _run(run_tool("type_text", {"text": "x", "element_index": 3}, ToolContext(pid=7, window_id=8)))
@@ -265,3 +284,69 @@ def test_list_apps_tool_reports_configured_apps(monkeypatch):
     _install(monkeypatch)
     out = _run(run_tool("list_apps", {}, ToolContext()))
     assert out.startswith("ok:") and "calculator" in out and "vscode" in out
+
+
+# ── done-verification gate (issue #21, root cause #3) ─────────────────────────
+from computer import skill as skill_mod  # noqa: E402
+from computer.skill import ComputerSkill  # noqa: E402
+
+
+class _Result:
+    def __init__(self, parsed):
+        self.parsed = parsed
+        self.text = ""
+
+
+class _FakeClient:
+    """Hands back a queued sequence of parsed model replies; records prompts so a
+    test can tell the action turn from the verification turn."""
+    def __init__(self, replies):
+        self._replies = list(replies)
+        self.calls: list[str] = []
+
+    async def chat(self, prompt, **kw):
+        self.calls.append(prompt)
+        return _Result(self._replies.pop(0))
+
+
+def _drive_with(monkeypatch, replies, *, max_done_rejections=2, max_steps=4):
+    # The window always scans as a non-empty a11y tree, so every decision and
+    # every verification goes through client.chat (no screenshot needed).
+    async def _scan(ctx, **kw):
+        return {"element_count": 3, "tree_markdown": "A1 ..."}
+    monkeypatch.setattr(skill_mod, "scan", _scan)
+    skill = ComputerSkill(max_done_rejections=max_done_rejections)
+    client = _FakeClient(replies)
+    steps, success, note = _run(
+        skill._drive(ToolContext(pid=7, window_id=8), "goal", client,
+                     None, max_steps))
+    return steps, success, note, client
+
+
+_DONE = {"thinking": "", "actions": [{"type": "done", "success": True, "note": "done"}]}
+
+
+def test_verified_done_reports_success(monkeypatch):
+    steps, success, note, client = _drive_with(
+        monkeypatch, [_DONE, {"verified": True, "reason": "all cells correct"}])
+    assert success is True
+    assert len(client.calls) == 2          # one action turn + one verify turn
+
+
+def test_unverified_done_is_rejected_not_reported_as_success(monkeypatch):
+    # done(success=true) twice, verifier says false both times → never succeeds.
+    steps, success, note, client = _drive_with(
+        monkeypatch,
+        [_DONE, {"verified": False, "reason": "A6 is empty"},
+         _DONE, {"verified": False, "reason": "A6 is empty"}],
+        max_done_rejections=2)
+    assert success is False
+    assert "unverified" in note
+    assert any("REJECTED" in s.get("outcome", "") for s in steps)
+
+
+def test_self_reported_failure_skips_verification(monkeypatch):
+    fail = {"thinking": "", "actions": [{"type": "done", "success": False, "note": "gave up"}]}
+    steps, success, note, client = _drive_with(monkeypatch, [fail])
+    assert success is False and note == "gave up"
+    assert len(client.calls) == 1          # action turn only; no verify call

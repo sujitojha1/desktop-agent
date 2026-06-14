@@ -157,7 +157,21 @@ async def _type(ctx: ToolContext, a: dict) -> str:
     args["text"] = str(text)
     if a.get("element_index") is not None and int(a["element_index"]) >= 0:
         args["element_index"] = int(a["element_index"])
-    return _outcome(await driver.acall("type_text", args))
+    res = await driver.acall("type_text", args)
+    if driver.is_error(res):
+        return _outcome(res)
+    # Optional atomic commit. Grid/cell editors (Excel, tables, some forms) leave
+    # the edited cell "open" until a commit key lands; splitting the type and its
+    # commit across actions — or across turn boundaries — lets the next `type`
+    # append into the same still-open cell (10 then 20 → "1020"). Folding the
+    # commit into this one action makes it impossible to separate the two.
+    commit = a.get("commit")
+    if commit:
+        key = "enter" if commit is True else str(commit)
+        key_args = ctx.target(a)
+        key_args["key"] = key
+        return _outcome(await driver.acall("press_key", key_args))
+    return "ok"
 
 
 async def _key(ctx: ToolContext, a: dict) -> str:
@@ -415,8 +429,12 @@ _reg("double_click", "Double-click a control by element_index or x,y.",
      _obj(_ADDR), _pointer("double_click"))
 _reg("right_click", "Right-click a control by element_index or x,y.",
      _obj(_ADDR), _pointer("right_click"))
-_reg("type", "Type text into the focused control (or element_index if given).",
-     _obj({"value": {"type": "string"}, "element_index": {"type": "integer"}},
+_reg("type", "Type text into the focused control (or element_index if given). "
+     "Set commit to 'enter' or 'tab' to commit the value in the SAME action — "
+     "required for spreadsheet/grid cells so the next value starts a fresh cell "
+     "instead of appending into the still-open one.",
+     _obj({"value": {"type": "string"}, "element_index": {"type": "integer"},
+           "commit": {"type": "string", "enum": ["enter", "tab"]}},
           ["value"]), _type)
 _reg("key", "Press one key, e.g. 'enter', 'escape', 'tab'. Optional modifiers[].",
      _obj({"value": {"type": "string"},
