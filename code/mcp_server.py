@@ -392,42 +392,12 @@ def search_knowledge(query: str, k: int = 5) -> list[dict]:
 # ┌─────────────────────────────────────────────────────────────────────────┐
 # │ SURFACE B — cua-driver daemon (Rust binary, UIA-based, element indices)│
 # │                                                                        │
-# │ These tools shell out to `cua-driver call <tool> <json>`.  They are    │
-# │ NOT used by the active ComputerSkill (Surface A) which runs through    │
-# │ cua.Localhost SDK + vision-based coordinate actions (computer/skill.py │
-# │ + computer/tools.py).                                                  │
-# │                                                                        │
-# │ Surface B is retained for future use (e.g., an MCP-loop skill that     │
-# │ uses UIA element indices instead of vision).  No skill currently lists │
-# │ these in its `tools_allowed`, so they are unreachable at runtime.      │
+# │ These MCP tools and the ComputerSkill (computer/skill.py) share ONE    │
+# │ transport: computer.driver.call → `cua-driver call <tool> <json>`.     │
+# │ Importing the same helper here guarantees the MCP surface and the      │
+# │ in-skill surface can never drift to two different backends.            │
 # └─────────────────────────────────────────────────────────────────────────┘
-import shutil
-import subprocess
-
-CUA_DRIVER_BIN = os.environ.get("CUA_DRIVER_BIN", "cua-driver")
-
-
-def _cua(tool: str, args: dict | None = None) -> dict:
-    """Invoke one cua-driver tool through the running daemon and return its
-    parsed JSON. On failure returns {"error": ...} rather than raising, so the
-    model sees the message and can recover (re-scan, pick a different element)."""
-    exe = shutil.which(CUA_DRIVER_BIN) or CUA_DRIVER_BIN
-    try:
-        proc = subprocess.run(
-            [exe, "call", tool, json.dumps(args or {})],
-            capture_output=True, text=True, timeout=60,
-        )
-    except Exception as e:  # noqa: BLE001
-        return {"error": f"cua-driver {tool} failed to spawn: {type(e).__name__}: {e}"}
-    if proc.returncode != 0:
-        return {"error": (proc.stderr or proc.stdout or "non-zero exit").strip()}
-    out = (proc.stdout or "").strip()
-    if not out:
-        return {"ok": True}
-    try:
-        return json.loads(out)
-    except json.JSONDecodeError:
-        return {"raw": out}
+from computer.driver import call as _cua  # noqa: E402  (single driver doorway)
 
 
 @mcp.tool()

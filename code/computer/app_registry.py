@@ -1,12 +1,21 @@
-"""Generic, data-driven app launch registry for the Computer-use skill.
+"""Data-driven app launch registry for the Computer-use skill.
 
-The launch surface used to hard-code ``Start-Process '<name>'``, which only
-worked when an app's friendly name *was* an executable on PATH (`calc`,
-`notepad`). Real apps live behind long absolute paths (Office, VS Code) or
-store-launcher stubs, so this module makes launching config-driven: `apps.yaml`
-maps a friendly name → concrete launch target, and `launch_process` resolves
-through it. Unknown names fall through unchanged, so anything that worked before
-keeps working — adding an app is a yaml edit, not a code change.
+`apps.yaml` maps a friendly name → how the cua-driver `launch_app` tool should
+start it. Launching is config, not code: to teach the agent a new app, add a yaml
+entry; unknown names fall through and are launched by `name` (the driver tries the
+Start-Menu AppsFolder index, then a PATH search), so anything already on PATH
+keeps working without an entry.
+
+Each entry names exactly one launch field, matching `launch_app`'s routing
+(see docs/cua_driver_tools.md §2):
+
+  name   a display name / PATH command (e.g. `code`, `notepad`) — most portable.
+  path   a full path to an .exe.
+  aumid  an App User Model ID for a packaged/Store app (Calculator, Notepad on
+         Win11) — returns the real packaged pid, unlike the System32 stub .exe.
+
+`target` is still accepted for back-compat: a value that looks like a path
+(contains a slash or ends in .exe) becomes `path`, otherwise `name`.
 """
 from __future__ import annotations
 
@@ -18,15 +27,22 @@ import yaml
 
 APPS_CONFIG_PATH = Path(__file__).with_name("apps.yaml")
 
+# The launch fields cua-driver's launch_app accepts, in resolution precedence.
+_LAUNCH_FIELDS = ("aumid", "path", "name")
+
 
 @dataclass(frozen=True)
 class AppEntry:
-    """One resolved app: what to launch (`target` + optional `args`) and the
-    `window_title` substring used to front+maximize it afterward."""
+    """One resolved app: the single `launch_app` field/value that starts it and
+    the `window_title` substring used to find its window after a stub launch."""
     name: str
-    target: str
+    launch_field: str           # one of _LAUNCH_FIELDS
+    launch_value: str
     window_title: Optional[str] = None
-    args: str = ""
+
+    def launch_args(self) -> dict:
+        """The args dict to hand cua-driver's `launch_app`."""
+        return {self.launch_field: self.launch_value}
 
 
 _REGISTRY: dict[str, AppEntry] | None = None
@@ -37,11 +53,23 @@ def _normalize(name: str) -> str:
     return " ".join(str(name).strip().lower().split())
 
 
+def _resolve_launch(key: str, spec: dict) -> tuple[str, str]:
+    """Pick the launch field + value for one yaml entry. An explicit
+    name/path/aumid wins; else `target` is classified; else the key is the name."""
+    for field in _LAUNCH_FIELDS:
+        if spec.get(field):
+            return field, str(spec[field])
+    target = str(spec.get("target") or key)
+    looks_like_path = ("\\" in target or "/" in target
+                       or target.lower().endswith(".exe"))
+    return ("path" if looks_like_path else "name"), target
+
+
 def load_registry(*, force: bool = False) -> dict[str, AppEntry]:
-    """Parse apps.yaml into a ``{normalized_name: AppEntry}`` lookup, with every
-    alias pointing at the same entry. Cached after first read; pass ``force=True``
-    to reload (tests / hot config edits). A missing or empty file yields an empty
-    registry rather than raising — callers then launch names verbatim."""
+    """Parse apps.yaml into ``{normalized_name: AppEntry}``, every alias pointing
+    at the same entry. Cached after first read; pass ``force=True`` to reload. A
+    missing/empty file yields an empty registry (callers then launch names
+    verbatim) rather than raising."""
     global _REGISTRY
     if _REGISTRY is not None and not force:
         return _REGISTRY
@@ -54,11 +82,12 @@ def load_registry(*, force: bool = False) -> dict[str, AppEntry]:
 
     for key, spec in (raw.get("apps") or {}).items():
         spec = spec or {}
+        launch_field, launch_value = _resolve_launch(key, spec)
         entry = AppEntry(
             name=str(key),
-            target=str(spec.get("target") or key),
+            launch_field=launch_field,
+            launch_value=launch_value,
             window_title=str(spec.get("window_title") or key),
-            args=str(spec.get("args") or ""),
         )
         for alias in [key, *(spec.get("aliases") or [])]:
             registry[_normalize(alias)] = entry
@@ -70,7 +99,7 @@ def load_registry(*, force: bool = False) -> dict[str, AppEntry]:
 def resolve_app(name: str) -> Optional[AppEntry]:
     """Resolve a friendly app name (key or alias, case/space-insensitive) to its
     AppEntry, or None when the registry has no match — the signal for callers to
-    fall back to launching the raw name."""
+    launch the raw name."""
     if not name:
         return None
     return load_registry().get(_normalize(name))

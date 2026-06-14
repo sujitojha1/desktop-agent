@@ -1,9 +1,9 @@
-"""Smoke tests for the Computer skill's named tool surface (issue #4).
+"""Smoke tests for the Computer skill's named tool surface (computer/tools.py).
 
-These run without a desktop: they assert the registry enumerates the expected
-tools and that dispatch routes by name through `run_tool` against a fake host.
-The live deterministic calc run (launch → type → key → '=') is exercised
-separately on Windows; CI has no display, so it is not encoded here.
+These run without the cua-driver daemon or a desktop: every tool dispatches
+through `computer.driver.acall`, which we replace with a recorder so we can assert
+the exact `(driver_tool, args)` payload each handler builds. No SDK, no PowerShell,
+no fake `host` object — the only boundary is the driver call.
 """
 from __future__ import annotations
 
@@ -13,27 +13,55 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from computer import tools as tools_mod
 from computer.tools import (
     ToolContext,
     enumerate_windows,
+    launch_app,
     list_tools,
     run_tool,
     tool_names,
 )
 
 
-# Tools the registry must expose (the ✅/⚠️ rows of the #3 coverage table).
+# ── driver recorder ──────────────────────────────────────────────────────────
+class _Driver:
+    """Stand-in for computer.driver: records every acall and returns canned
+    responses keyed by tool name (default {"ok": True})."""
+    def __init__(self, responses=None):
+        self.calls: list[tuple[str, dict]] = []
+        self.responses = responses or {}
+
+    async def acall(self, tool, args=None, **kw):
+        self.calls.append((tool, dict(args or {})))
+        return self.responses.get(tool, {"ok": True})
+
+
+def _install(monkeypatch, responses=None) -> _Driver:
+    rec = _Driver(responses)
+    monkeypatch.setattr(tools_mod.driver, "acall", rec.acall)
+    # Make launch's settle-sleep instant.
+    async def _nosleep(*_a, **_k):
+        return None
+    monkeypatch.setattr(tools_mod.asyncio, "sleep", _nosleep)
+    return rec
+
+
+def _run(coro):
+    return asyncio.run(coro)
+
+
+# ── registry shape ────────────────────────────────────────────────────────────
 EXPECTED = {
-    "click", "double_click", "right_click", "move", "drag", "scroll",
-    "type", "key", "hotkey", "launch", "kill_app", "bring_to_front",
+    "scan", "click", "double_click", "right_click", "type", "key", "hotkey",
+    "set_value", "scroll", "drag", "launch", "kill_app", "bring_to_front",
     "list_windows", "list_apps", "get_screen_size", "get_cursor_position",
-    "screenshot", "zoom", "wait",
+    "zoom", "wait",
 }
 
 
 def test_registry_enumerates_expected_tools():
-    names = set(tool_names())
-    assert EXPECTED <= names, f"missing tools: {EXPECTED - names}"
+    assert EXPECTED <= set(tool_names())
 
 
 def test_list_tools_shape():
@@ -44,179 +72,182 @@ def test_list_tools_shape():
 
 
 def test_unknown_tool_is_a_clean_error():
-    ctx = ToolContext(host=None)
-    out = asyncio.run(run_tool("nope", {}, ctx))
+    out = _run(run_tool("nope", {}, ToolContext()))
     assert out.startswith("error: unknown tool")
 
 
-# ── dispatch routes by name against a fake async host ────────────────────────
-class _Recorder:
-    def __init__(self):
-        self.calls: list[tuple] = []
-
-    def __getattr__(self, group):
-        rec = self
-
-        class _Group:
-            def __getattr__(self, method):
-                async def _call(*args, **kw):
-                    rec.calls.append((f"{group}.{method}", args, kw))
-                return _call
-        return _Group()
+# ── addressing: element_index vs pixels, context targeting ────────────────────
+def test_click_by_element_index_targets_context_window(monkeypatch):
+    rec = _install(monkeypatch)
+    ctx = ToolContext(pid=10, window_id=20)
+    assert _run(run_tool("click", {"element_index": 5}, ctx)) == "ok"
+    assert rec.calls == [("click", {"pid": 10, "window_id": 20, "element_index": 5})]
 
 
-def test_dispatch_routes_and_scales_coordinates():
-    host = _Recorder()
-    # scale 2.0 → (10,20) becomes (20,40); proves coords flow through ToolContext.
-    ctx = ToolContext(host=host, scale_x=2.0, scale_y=2.0)
-    out = asyncio.run(run_tool("click", {"x": 10, "y": 20}, ctx))
+def test_click_by_pixels_when_no_element(monkeypatch):
+    rec = _install(monkeypatch)
+    ctx = ToolContext(pid=10, window_id=20)
+    _run(run_tool("click", {"x": 100, "y": 200, "button": "right"}, ctx))
+    assert rec.calls == [("click", {"pid": 10, "window_id": 20,
+                                    "x": 100, "y": 200, "button": "right"})]
+
+
+def test_click_needs_pid(monkeypatch):
+    _install(monkeypatch)
+    out = _run(run_tool("click", {"element_index": 5}, ToolContext()))
+    assert out.startswith("error: click needs a target pid")
+
+
+def test_click_needs_address(monkeypatch):
+    _install(monkeypatch)
+    out = _run(run_tool("click", {}, ToolContext(pid=10, window_id=20)))
+    assert out.startswith("error: click needs element_index or x,y")
+
+
+def test_action_pid_override_wins(monkeypatch):
+    rec = _install(monkeypatch)
+    ctx = ToolContext(pid=10, window_id=20)
+    _run(run_tool("click", {"element_index": 1, "pid": 99, "window_id": 88}, ctx))
+    assert rec.calls[0][1]["pid"] == 99 and rec.calls[0][1]["window_id"] == 88
+
+
+def test_session_flows_onto_payload(monkeypatch):
+    rec = _install(monkeypatch)
+    ctx = ToolContext(pid=10, window_id=20, session="run-1")
+    _run(run_tool("click", {"element_index": 1}, ctx))
+    assert rec.calls[0][1]["session"] == "run-1"
+
+
+# ── keyboard / value tools map to driver tool names ───────────────────────────
+def test_type_maps_to_type_text(monkeypatch):
+    rec = _install(monkeypatch)
+    _run(run_tool("type", {"value": "hi"}, ToolContext(pid=7)))
+    assert rec.calls == [("type_text", {"pid": 7, "text": "hi"})]
+
+
+def test_type_alias_and_element_index(monkeypatch):
+    rec = _install(monkeypatch)
+    _run(run_tool("type_text", {"text": "x", "element_index": 3}, ToolContext(pid=7, window_id=8)))
+    assert rec.calls == [("type_text", {"pid": 7, "window_id": 8, "text": "x", "element_index": 3})]
+
+
+def test_key_maps_to_press_key(monkeypatch):
+    rec = _install(monkeypatch)
+    _run(run_tool("key", {"value": "enter"}, ToolContext(pid=7)))
+    assert rec.calls == [("press_key", {"pid": 7, "key": "enter"})]
+
+
+def test_hotkey_requires_two_keys(monkeypatch):
+    rec = _install(monkeypatch)
+    assert _run(run_tool("hotkey", {"keys": ["ctrl", "s"]}, ToolContext(pid=7))) == "ok"
+    assert rec.calls == [("hotkey", {"pid": 7, "keys": ["ctrl", "s"]})]
+    out = _run(run_tool("hotkey", {"keys": ["ctrl"]}, ToolContext(pid=7)))
+    assert out.startswith("error: hotkey needs")
+
+
+def test_set_value_requires_window_and_index(monkeypatch):
+    rec = _install(monkeypatch)
+    out = _run(run_tool("set_value", {"element_index": 2, "value": "5"},
+                        ToolContext(pid=7, window_id=8)))
     assert out == "ok"
-    assert host.calls == [("mouse.click", (20, 40, "left"), {})]
+    assert rec.calls == [("set_value", {"pid": 7, "window_id": 8,
+                                        "element_index": 2, "value": "5"})]
 
 
-def test_type_and_key_route_to_keyboard():
-    host = _Recorder()
-    ctx = ToolContext(host=host)
-    asyncio.run(run_tool("type", {"value": "56"}, ctx))
-    asyncio.run(run_tool("key", {"value": "Enter"}, ctx))
-    assert host.calls == [
-        ("keyboard.type", ("56",), {}),
-        ("keyboard.keypress", ("Enter",), {}),
-    ]
+def test_scroll_validates_direction(monkeypatch):
+    rec = _install(monkeypatch)
+    assert _run(run_tool("scroll", {"direction": "down", "amount": 4}, ToolContext(pid=7))) == "ok"
+    assert rec.calls == [("scroll", {"pid": 7, "direction": "down", "amount": 4})]
+    out = _run(run_tool("scroll", {"direction": "sideways"}, ToolContext(pid=7)))
+    assert out.startswith("error: scroll needs direction")
 
 
-def test_tool_alias_normalization():
-    host = _Recorder()
-    ctx = ToolContext(host=host)
-    # Test "press" alias mapping to "key"
-    asyncio.run(run_tool("press", {"keys": "Enter"}, ctx))
-    # Test "keys" alias mapping to "type"
-    asyncio.run(run_tool("keys", {"value": "125*8="}, ctx))
-    # Test multi-character key being normalized to type
-    asyncio.run(run_tool("key", {"value": "125"}, ctx))
-    
-    assert host.calls == [
-        ("keyboard.keypress", ("Enter",), {}),
-        ("keyboard.type", ("125*8=",), {}),
-        ("keyboard.type", ("125",), {}),
-    ]
+# ── driver errors are folded into the outcome string ──────────────────────────
+def test_driver_error_becomes_outcome(monkeypatch):
+    _install(monkeypatch, {"click": {"error": "background_unavailable"}})
+    out = _run(run_tool("click", {"element_index": 1}, ToolContext(pid=7, window_id=8)))
+    assert out == "error: background_unavailable"
 
 
-def test_missing_coords_is_validation_error_not_crash():
-    ctx = ToolContext(host=_Recorder())
-    out = asyncio.run(run_tool("click", {}, ctx))
-    assert out.startswith("error: click needs x,y")
+# ── enumerate_windows wraps driver list_windows ───────────────────────────────
+def test_enumerate_windows_filters_by_title(monkeypatch):
+    _install(monkeypatch, {"list_windows": {"windows": [
+        {"pid": 1, "window_id": 11, "title": "Calculator"},
+        {"pid": 2, "window_id": 22, "title": "VS Code"}]}})
+    wins = _run(enumerate_windows(title="calc"))
+    assert wins == [{"pid": 1, "window_id": 11, "title": "Calculator"}]
 
 
-# ── list_windows via shell.run JSON (issue #5) ───────────────────────────────
-class _ShellHost:
-    """Fake host whose shell.run returns canned PowerShell stdout — no desktop."""
-    def __init__(self, stdout: str):
-        self._stdout = stdout
-
-    @property
-    def shell(self):
-        outer = self
-
-        class _Shell:
-            async def run(self, command, timeout=20, background=False):
-                return type("R", (), {"stdout": outer._stdout, "stderr": "",
-                                      "returncode": 0, "success": True})()
-        return _Shell()
-
-
-_TWO = '[{"Id":1,"MainWindowTitle":"Calculator"},{"Id":2,"MainWindowTitle":"VS Code"}]'
+# ── launch recovery: stub/UWP windows reconciled by title ─────────────────────
+def test_launch_reconciles_window_by_title(monkeypatch):
+    # launch_app returns a stub (pid 0, no windows); list_windows recovers the
+    # real on-screen window by the registry's window_title ("Calculator").
+    rec = _install(monkeypatch, {
+        "launch_app": {"pid": 0, "windows": []},
+        "list_windows": {"windows": [
+            {"pid": 555, "window_id": 999, "title": "Calculator", "is_on_screen": True}]},
+    })
+    res = _run(launch_app("calculator"))
+    assert res["pid"] == 555 and res["window_id"] == 999
+    # AUMID launch field came from the registry.
+    assert rec.calls[0][0] == "launch_app"
+    assert "aumid" in rec.calls[0][1]
 
 
-def test_list_windows_parses_array():
-    wins = asyncio.run(enumerate_windows(_ShellHost(_TWO)))
-    assert wins == [{"pid": 1, "title": "Calculator"},
-                    {"pid": 2, "title": "VS Code"}]
+def test_launch_tool_updates_context(monkeypatch):
+    _install(monkeypatch, {
+        "launch_app": {"pid": 0, "windows": []},
+        "list_windows": {"windows": [
+            {"pid": 555, "window_id": 999, "title": "Calculator", "is_on_screen": True}]},
+    })
+    ctx = ToolContext()
+    out = _run(run_tool("launch", {"app": "calculator"}, ctx))
+    assert "ok: launched calculator" in out
+    assert ctx.pid == 555 and ctx.window_id == 999 and ctx.launched_pids == {555}
 
 
-def test_list_windows_single_object_normalised_to_list():
-    # PowerShell emits a bare object (not an array) for a single match.
-    wins = asyncio.run(enumerate_windows(_ShellHost('{"Id":7,"MainWindowTitle":"Calculator"}')))
-    assert wins == [{"pid": 7, "title": "Calculator"}]
+def test_kill_app_uses_context_pid(monkeypatch):
+    rec = _install(monkeypatch)
+    _run(run_tool("kill_app", {}, ToolContext(pid=42)))
+    assert rec.calls == [("kill_app", {"pid": 42})]
 
 
-def test_list_windows_empty_output():
-    assert asyncio.run(enumerate_windows(_ShellHost(""))) == []
-
-
-def test_list_windows_title_filter_is_case_insensitive():
-    wins = asyncio.run(enumerate_windows(_ShellHost(_TWO), "calc"))
-    assert wins == [{"pid": 1, "title": "Calculator"}]
-
-
-def test_list_windows_tool_dispatch_reports_count():
-    out = asyncio.run(run_tool("list_windows", {}, ToolContext(host=_ShellHost(_TWO))))
-    assert out.startswith("ok: 2 window(s)") and "Calculator" in out
-
-
-def test_launch_tool_captures_pid():
-    ctx = ToolContext(host=_ShellHost("1234"))
-    out = asyncio.run(run_tool("launch", {"app": "calc"}, ctx))
-    assert "ok: launched calc (PID 1234)" in out
-    assert ctx.launched_pids == {1234}
-
-
-# ── app launch registry (apps.yaml) ──────────────────────────────────────────
+# ── app registry (apps.yaml) ──────────────────────────────────────────────────
 from computer.app_registry import list_apps as registry_apps
 from computer.app_registry import load_registry, resolve_app
 
 
 def test_registry_resolves_key_alias_and_case():
-    # Shipped entries: calculator (alias 'calc') and excel (alias 'ms excel').
-    assert resolve_app("calculator").target == "calc"
+    load_registry(force=True)
+    assert resolve_app("calculator").launch_field == "aumid"
     assert resolve_app("CALC").name == "calculator"
-    assert resolve_app("  ms  excel ").name == "excel"          # space-collapsed
-    assert resolve_app("nonesuch") is None                       # unknown → None
+    assert resolve_app("  vs  code ").name == "vscode"      # space-collapsed alias
+    assert resolve_app("nonesuch") is None
     assert resolve_app("") is None
 
 
-def test_registry_carries_window_title_default():
+def test_registry_launch_fields():
+    assert resolve_app("vscode").launch_args() == {"name": "code"}
+    assert resolve_app("excel").launch_field == "path"
+    assert resolve_app("calculator").launch_value.endswith("!App")
+
+
+def test_registry_window_title_default():
     assert resolve_app("excel").window_title == "Excel"
 
 
 def test_list_apps_deduplicates_across_aliases():
     names = {e.name for e in registry_apps()}
-    assert {"calculator", "excel"} <= names
-    # calculator has 2 aliases but appears once in the distinct listing.
+    assert {"calculator", "vscode", "excel"} <= names
     assert sum(e.name == "calculator" for e in registry_apps()) == 1
 
 
-def test_launch_resolves_registry_target_into_command():
-    # 'excel' must resolve to its absolute EXE path in the Start-Process call,
-    # not be launched verbatim. _CmdCapture records the shell command.
-    class _CmdCapture:
-        def __init__(self):
-            self.cmd = ""
-
-        @property
-        def shell(self):
-            outer = self
-
-            class _Shell:
-                async def run(self, command, timeout=20, background=False):
-                    outer.cmd = command
-                    return type("R", (), {"stdout": "999", "stderr": "",
-                                          "returncode": 0, "success": True})()
-            return _Shell()
-
-    host = _CmdCapture()
-    ctx = ToolContext(host=host)
-    asyncio.run(run_tool("launch", {"app": "excel"}, ctx))
-    assert "EXCEL.EXE" in host.cmd and "-FilePath" in host.cmd
-    assert ctx.launched_pids == {999}
+def test_unknown_app_falls_through():
+    load_registry(force=True)
+    assert resolve_app("notepad++") is None  # not configured → launched by name
 
 
-def test_list_apps_tool_reports_configured_apps():
-    out = asyncio.run(run_tool("list_apps", {}, ToolContext(host=None)))
-    assert out.startswith("ok:") and "calculator" in out and "excel" in out
-
-
-def test_unknown_app_falls_through_to_raw_name():
-    load_registry(force=True)  # ensure fresh registry
-    assert resolve_app("notepad") is None  # not configured → launched verbatim
-
+def test_list_apps_tool_reports_configured_apps(monkeypatch):
+    _install(monkeypatch)
+    out = _run(run_tool("list_apps", {}, ToolContext()))
+    assert out.startswith("ok:") and "calculator" in out and "vscode" in out

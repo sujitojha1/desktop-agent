@@ -236,12 +236,12 @@ _TOOL_CATALOG = {
             "required": ["query"],
         },
     },
-    # ── SURFACE B: cua-driver UIA tools (currently unreachable) ────────────
-    # These schemas exist for the cua-driver daemon (Rust binary) which uses
-    # UIA element indices.  The active ComputerSkill (Surface A) bypasses
-    # MCP entirely and uses cua.Localhost SDK + vision-based coordinate
-    # actions.  No skill currently lists these in tools_allowed, so they
-    # are never passed to the gateway.  Retained for future UIA-loop work.
+    # ── SURFACE B: cua-driver UIA tools (MCP-exposed) ──────────────────────
+    # These schemas mirror the cua-driver daemon tools that mcp_server.py
+    # exposes for external MCP clients. The active ComputerSkill drives the
+    # same daemon directly (computer/driver.py — one shared transport) rather
+    # than over MCP, so no skill lists these in tools_allowed; they are the
+    # external/agent-facing view of the same surface.
     "computer_list_apps": {
         "name": "computer_list_apps",
         "description": "List running + installed Windows apps with pids. Start here to find a target app's pid.",
@@ -877,10 +877,10 @@ async def run_skill(skill: Skill, node_id: str, graph_nodes,
 
     if skill.name == "computer":
         # Same shape as the browser branch: the Computer skill owns its own
-        # cascade (deterministic launch → vision loop) over the real desktop
-        # via cua.Localhost and routes each vision call through the V9 gateway
-        # internally — so we bypass the gateway-chat dispatch and hand off to
-        # ComputerSkill.run(NodeSpec).
+        # cascade (deterministic launch → hybrid UIA/vision loop) over the real
+        # desktop via the cua-driver daemon, and routes each LLM call through the
+        # V9 gateway internally — so we bypass the gateway-chat dispatch and hand
+        # off to ComputerSkill.run(NodeSpec).
         node_dict = graph_nodes[node_id]
         node_spec = NodeSpec(
             skill="computer",

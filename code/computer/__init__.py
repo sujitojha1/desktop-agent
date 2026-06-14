@@ -1,11 +1,13 @@
-"""S9 Computer-Use skill — desktop driver via cua.Localhost.
+"""S9 Computer-Use skill — desktop driver via the cua-driver daemon.
 
-Direct, unsandboxed host control through `cua.Localhost.connect()` (NOT a VM
-Sandbox, NOT the macOS Rust cua-driver binary). Perception is screenshot-based
-and actions are coordinate-based — there is no UIA accessibility tree — so the
-cascade is deterministic (launch + scripted steps) → vision (V9 /v1/vision).
-Reuses browser.client.V9Client for the gateway; no new gateway.
+Every desktop operation goes through the `cua-driver` daemon (a Rust binary on a
+Windows named pipe); there is no `cua` Python SDK and no PowerShell. Perception is
+the daemon's per-window UIA tree + screenshot (`get_window_state`); the cascade is
+deterministic (launch + scripted tool steps) → hybrid drive (element_index over
+the UIA tree, with a per-window vision fallback). Reuses browser.client.V9Client
+for the gateway; no new gateway. See docs/cua_driver_tools.md.
 """
+from . import driver
 from .app_registry import (
     AppEntry,
     list_apps,
@@ -16,6 +18,7 @@ from .skill import (
     ACTION_SCHEMA,
     ComputerOutput,
     ComputerSkill,
+    SYSTEM_PROMPT_TREE,
     SYSTEM_PROMPT_VISION,
 )
 from .tools import (
@@ -23,10 +26,10 @@ from .tools import (
     ToolContext,
     ToolSpec,
     enumerate_windows,
-    front_and_maximize,
-    launch_process,
+    launch_app,
     list_tools,
     run_tool,
+    scan,
     tool_names,
 )
 
@@ -35,7 +38,9 @@ __all__ = [
     "AppEntry",
     "ComputerOutput",
     "ComputerSkill",
+    "SYSTEM_PROMPT_TREE",
     "SYSTEM_PROMPT_VISION",
+    "driver",
     "list_apps",
     "load_registry",
     "resolve_app",
@@ -43,9 +48,9 @@ __all__ = [
     "ToolContext",
     "ToolSpec",
     "enumerate_windows",
-    "front_and_maximize",
-    "launch_process",
+    "launch_app",
     "list_tools",
     "run_tool",
+    "scan",
     "tool_names",
 ]

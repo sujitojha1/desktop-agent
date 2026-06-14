@@ -1,9 +1,10 @@
 """Smoke tests for the cua-driver-backed computer_* MCP tools (mcp_server.py).
 
-The tools shell out to `cua-driver call <tool> <json>`; here we monkeypatch
-`subprocess.run` so the tests need neither the driver daemon nor a desktop.
-We assert (a) the correct cua-driver tool + JSON args are built, and (b) the
-process result / errors are surfaced sanely.
+The MCP tools and the ComputerSkill share ONE transport — `computer.driver.call`
+→ `cua-driver call <tool> <json>`. Here we monkeypatch `subprocess.run` on that
+shared module, so the tests need neither the driver daemon nor a desktop. We
+assert (a) the correct cua-driver tool + JSON args are built, and (b) the process
+result / errors are surfaced sanely.
 """
 from __future__ import annotations
 
@@ -14,6 +15,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import mcp_server
+from computer import driver
 
 
 class _Proc:
@@ -22,15 +24,15 @@ class _Proc:
 
 
 def _patch(monkeypatch, *, stdout="", stderr="", returncode=0):
-    """Capture the argv cua-driver would be called with."""
+    """Capture the argv cua-driver would be called with, on the shared driver."""
     seen = {}
 
-    def fake_run(argv, capture_output, text, timeout):
+    def fake_run(argv, **kwargs):
         seen["argv"] = argv
         return _Proc(stdout=stdout, stderr=stderr, returncode=returncode)
 
-    monkeypatch.setattr(mcp_server.subprocess, "run", fake_run)
-    monkeypatch.setattr(mcp_server.shutil, "which", lambda _x: "cua-driver")
+    monkeypatch.setattr(driver.subprocess, "run", fake_run)
+    monkeypatch.setattr(driver.shutil, "which", lambda _x: "cua-driver")
     return seen
 
 
