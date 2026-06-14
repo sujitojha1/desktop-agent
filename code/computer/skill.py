@@ -115,7 +115,18 @@ SYSTEM_PROMPT_TREE = (
     "  launch {app}                     — start another app by name\n"
     "  wait {seconds}                   — let the UI settle\n"
     "  done {success, note}             — finish; success=true if the goal is met\n"
-    "Prefer one decisive action and re-read the next scan. Be terse in `thinking`."
+    "Prefer one decisive action and re-read the next scan. Be terse in `thinking`.\n"
+    "GRID / SPREADSHEET DATA ENTRY (Excel, tables): to put a value in a specific "
+    "cell, prefer `set_value {element_index, value}` on that cell — it writes "
+    "directly and commits, so values never run together. If you must `type`, you "
+    "MUST commit each entry with `key enter` (Enter commits and moves down one "
+    "cell) before typing the next value. Never emit several `type` actions in a "
+    "row without an `enter`/`tab` between them — the characters concatenate into "
+    "the one active cell.\n"
+    "VERIFY BEFORE DONE: only emit `done(success=true)` after the latest element "
+    "tree actually shows the goal met (e.g. each target cell holds its expected "
+    "value / computed result). If the scan doesn't confirm it, keep working or "
+    "emit `done(success=false, note=...)` — never claim success you can't see."
 )
 
 SYSTEM_PROMPT_VISION = (

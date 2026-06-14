@@ -32,6 +32,7 @@ Cascade layers:
 - On the a11y path, address controls by `element_index` from the latest scan — indices are turn-scoped, so use the freshest scan.
 - On the vision path, address by window-local pixel coordinate.
 - Emit MULTIPLE actions only when their effect is obvious; otherwise emit one and wait for the next scan.
-- Keep going until the goal's success condition is visible in a fresh scan; then emit `done(success=true, note="...")`.
+- **Grid / spreadsheet data entry** (Excel, tables): prefer `set_value {element_index, value}` on each target cell — it writes directly and commits, so values never run together. If you must `type`, commit each entry with `key enter` (Enter commits and moves down one cell) before typing the next value. Never emit several `type` actions in a row without an `enter`/`tab` between them, or the characters concatenate into the one active cell.
+- Keep going until the goal's success condition is visible in a fresh scan; then emit `done(success=true, note="...")`. Only claim `success=true` when the latest scan actually shows the result (e.g. each target cell holds its expected value); otherwise emit `done(success=false, note="...")` — never report success you can't see.
 - Be terse in `thinking` — one or two sentences.
 - Inputs: `metadata.goal` (required) describes what to accomplish. `metadata.app` (optional) names an app to launch first. `metadata.actions` (optional) lists deterministic tool steps to run before the drive loop.

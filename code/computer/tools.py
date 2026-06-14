@@ -162,6 +162,15 @@ async def _type(ctx: ToolContext, a: dict) -> str:
 
 async def _key(ctx: ToolContext, a: dict) -> str:
     key = a.get("value") or a.get("key") or ""
+    # The model sometimes emits a single key as `keys: ["down"]` (the `hotkey`
+    # shape). Absorb it: one element is that key; two+ is really a chord, so
+    # route to hotkey rather than erroring.
+    if not key and a.get("keys"):
+        ks = [str(k) for k in a["keys"] if k]
+        if len(ks) >= 2:
+            return await _hotkey(ctx, {**a, "keys": ks})
+        if ks:
+            key = ks[0]
     args = ctx.target(a)
     if "pid" not in args:
         return "error: key needs a target pid"

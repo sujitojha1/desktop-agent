@@ -137,6 +137,20 @@ def test_key_maps_to_press_key(monkeypatch):
     assert rec.calls == [("press_key", {"pid": 7, "key": "enter"})]
 
 
+def test_key_accepts_keys_list_for_single_key(monkeypatch):
+    # The model sometimes emits a single key as `keys: ["down"]`; absorb it
+    # instead of failing with "key needs a key name".
+    rec = _install(monkeypatch)
+    assert _run(run_tool("key", {"keys": ["down"]}, ToolContext(pid=7))) == "ok"
+    assert rec.calls == [("press_key", {"pid": 7, "key": "down"})]
+
+
+def test_key_with_multiple_keys_routes_to_hotkey(monkeypatch):
+    rec = _install(monkeypatch)
+    assert _run(run_tool("key", {"keys": ["ctrl", "s"]}, ToolContext(pid=7))) == "ok"
+    assert rec.calls == [("hotkey", {"pid": 7, "keys": ["ctrl", "s"]})]
+
+
 def test_hotkey_requires_two_keys(monkeypatch):
     rec = _install(monkeypatch)
     assert _run(run_tool("hotkey", {"keys": ["ctrl", "s"]}, ToolContext(pid=7))) == "ok"
