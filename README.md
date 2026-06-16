@@ -6,13 +6,15 @@ the skill runs a **Scan → Act → Verify** loop over the live desktop through 
 [`cua-driver`](https://github.com/trycua/cua) daemon (UI Automation), escalating only when
 the cheap layer fails:
 
-- **Layer 1 / 2a — deterministic** — launch + known hotkeys, no LLM, no vision.
+- **Layer 1 / 2a — deterministic** — launch + known hotkeys; no LLM, no vision.
 - **Layer 2b — AX tree + cheap text LLM** — read the UIA tree as markdown, click by element index.
 - **Layer 3 — vision** — only when the tree is empty (canvas/game): screenshot → set-of-marks → VLM.
 
 All LLM/vision calls route through the local **V9 gateway** (no paid APIs).
 
 ## Setup
+
+**Requirements:** Windows 10/11, Python 3.11+ with [`uv`](https://docs.astral.sh/uv/).
 
 ```bash
 # 1. Start the V9 gateway (port 8109)
@@ -31,7 +33,7 @@ entry to teach the agent a new app, no Python change.
 
 ## The 5 Windows scenarios
 
-Each exercises a different point on the cascade. Replace the demo links once recorded.
+Each exercises a different point on the cascade. Demo links are placeholders — replace once recorded.
 
 | # | Scenario | App | Layer | Demo |
 |---|----------|-----|-------|------|
