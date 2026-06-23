@@ -16,6 +16,7 @@ All LLM/vision calls route through the local **V9 gateway** (no paid APIs).
 
 **Requirements:** Windows 10/11, Python 3.11+ with [`uv`](https://docs.astral.sh/uv/).
 
+
 ```bash
 # 1. Start the V9 gateway (port 8109)
 cd llm_gatewayV9 && uv run python main.py
