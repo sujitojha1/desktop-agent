@@ -350,3 +350,74 @@ def test_self_reported_failure_skips_verification(monkeypatch):
     steps, success, note, client = _drive_with(monkeypatch, [fail])
     assert success is False and note == "gave up"
     assert len(client.calls) == 1          # action turn only; no verify call
+
+
+# ── grid typing coercion (issue #13 / #21: Excel cell concatenation) ──────────
+def test_is_grid_detects_excel_datagrid():
+    assert ComputerSkill._is_grid({"tree_markdown": 'DataGrid "Grid"\n DataItem "A1"'})
+    assert not ComputerSkill._is_grid({"tree_markdown": "document\n Edit 'Body'"})
+    assert not ComputerSkill._is_grid({})
+
+
+def test_coerce_forces_commit_on_bare_grid_type():
+    # The exact shape a cheap model emits: a `type` with no commit, plus a
+    # guessed cell index and junk coordinates. Coercion must commit it and drop
+    # the guessed targeting so the value lands in the active (walked) cell.
+    out = ComputerSkill._coerce_grid_typing(
+        [{"type": "type", "value": "10", "element_index": 168, "x": 5, "y": 5}])
+    assert out == [{"type": "type", "value": "10", "commit": "enter"}]
+
+
+def test_coerce_swallows_redundant_enter_after_type():
+    # `type 20` + separate `key:enter` + trailing `type 30` (the #21 pattern):
+    # both values must end up atomically committed, and the standalone Enter
+    # must be swallowed so a row isn't skipped.
+    out = ComputerSkill._coerce_grid_typing([
+        {"type": "type", "value": "20"},
+        {"type": "key", "keys": ["enter"]},
+        {"type": "type", "value": "30"},
+    ])
+    assert out == [{"type": "type", "value": "20", "commit": "enter"},
+                   {"type": "type", "value": "30", "commit": "enter"}]
+
+
+def test_coerce_preserves_explicit_commit_and_nontype_actions():
+    out = ComputerSkill._coerce_grid_typing([
+        {"type": "click", "element_index": 127},
+        {"type": "type", "value": "5", "commit": "tab"},
+        {"type": "key", "value": "escape"},
+    ])
+    assert out == [{"type": "click", "element_index": 127},
+                   {"type": "type", "value": "5", "commit": "tab"},
+                   {"type": "key", "value": "escape"}]
+
+
+def test_drive_coerces_typing_in_grid_window(monkeypatch):
+    # End-to-end through _drive: in a grid window the model's split type/key/type
+    # turn is applied as atomic per-cell commits, so no value can concatenate.
+    async def _scan(ctx, **kw):
+        return {"element_count": 5, "tree_markdown": 'DataGrid "Grid"\n[127] DataItem "A1"'}
+    monkeypatch.setattr(skill_mod, "scan", _scan)
+
+    recorded: list[dict] = []
+    async def _run_tool(name, a, ctx):
+        recorded.append({"type": name, **{k: v for k, v in a.items() if k != "type"}})
+        return "ok"
+    monkeypatch.setattr(skill_mod, "run_tool", _run_tool)
+
+    replies = [
+        {"thinking": "", "actions": [
+            {"type": "type", "value": "10"},
+            {"type": "key", "keys": ["enter"]},
+            {"type": "type", "value": "20"}]},
+        _DONE,
+        {"verified": True, "reason": "A1=10 A2=20"},
+    ]
+    skill = ComputerSkill()
+    steps, success, note = _run(skill._drive(
+        ToolContext(pid=7, window_id=8), "goal", _FakeClient(replies), None, 4))
+    typed = [r for r in recorded if r["type"] == "type"]
+    assert all(t.get("commit") == "enter" for t in typed)      # every value committed
+    assert [t["value"] for t in typed] == ["10", "20"]
+    assert not any(r["type"] in ("key", "press_key") for r in recorded)  # bare Enter swallowed
+    assert success is True

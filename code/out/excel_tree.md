@@ -1,0 +1,46 @@
+- Window "Excel"
+      - TitleBar "Excel"
+      - [0] MenuItem "Gayadhar Ojha" [id=MeControlWidget actions=[expand]]
+        - Image "Gayadhar Ojha"
+      - [1] Button "Help" [actions=[invoke]]
+      - [2] Button "Minimize" [actions=[invoke]]
+      - [3] Button "Maximize" [actions=[invoke]]
+      - [4] Button "Close" [actions=[invoke]]
+      - [5] Pane [id=OutSpaceNavBar actions=[scroll]]
+        - List "File"
+          - [6] ListItem "Home" [id=msotcidPlaceHome actions=[select]]
+          - [7] ListItem "New" [id=msotcidPlaceOfficeStart actions=[select]]
+          - [8] ListItem "Open" [id=msotcidPlaceOpen actions=[select]]
+          - [9] ListItem "Account" [id=msotcidPlaceApplication actions=[select]]
+          - [10] ListItem "Options" [id=ApplicationOptionsDialog actions=[invoke]]
+      - [11] Pane "Backstage view" [id=BackstageView actions=[scroll]]
+        - [12] Pane [id=HeaderContentScrollViewerToSyncWithMainContent actions=[scroll]]
+          - Text "Good evening"
+        - [13] Group "Home" [id=PlaceTabHomeContent actions=[scroll]]
+          - Group "New"
+            - [14] Button "Hide or show region" [id=HomePageSlabCreateNew actions=[toggle]]
+            - [15] Hyperlink "More templates" [actions=[invoke]]
+            - [16] List "Templates" [actions=[scroll]]
+              - [17] ListItem "Blank workbook" [actions=[invoke,select]]
+              - [18] ListItem "Revenue trend charting" [actions=[invoke,select]]
+              - [19] ListItem "Welcome to Excel" [actions=[invoke,select]]
+              - [20] ListItem "Formula tutorial" [actions=[invoke,select]]
+              - [21] ListItem "PivotTable tutorial" [actions=[invoke,select]]
+          - Group "Open"
+            - [22] Button "Recent" [actions=[invoke]]
+            - [23] Button "Favorites" [actions=[invoke]]
+            - [24] Button "Shared with Me" [actions=[invoke]]
+            - [25] Edit "Search for a file" [id=HomePageSearchBox actions=[set_value,text]]
+            - [26] List "Recent" [actions=[scroll]]
+              - [27] ListItem "LC PENDING_21112024 (1)" [actions=[invoke,select]]
+              - [28] ListItem "BabaTrend" [actions=[invoke,select]]
+            - [29] Hyperlink "More workbooks" [actions=[invoke]]
+    - [30] ComboBox "Name Box" [id=13 actions=[expand,set_value]]
+      - [31] Edit "Name Box" [id=1001 actions=[set_value]]
+      - [32] Button "Open" [id=DropDown actions=[invoke]]
+  - TitleBar = "Excel"
+    - MenuBar "System"
+      - [33] MenuItem "System" [actions=[invoke,expand]]
+    - [34] Button "Minimize" [actions=[invoke]]
+    - [35] Button "Maximize" [actions=[invoke]]
+    - [36] Button "Close" [actions=[invoke]]

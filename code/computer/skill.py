@@ -142,18 +142,38 @@ SYSTEM_PROMPT_TREE = (
     "  wait {seconds}                   — let the UI settle\n"
     "  done {success, note}             — finish; success=true if the goal is met\n"
     "Prefer one decisive action and re-read the next scan. Be terse in `thinking`.\n"
-    "GRID / SPREADSHEET DATA ENTRY (Excel, tables): put each value in with "
-    "`type {value, commit:'enter'}` — the commit is part of the same action, so "
-    "Enter commits the cell and moves down one row and the next value can never "
-    "append into a still-open cell. (Use commit:'tab' to move right instead.) "
-    "Excel grid cells do NOT support `set_value` (no UIA ValuePattern), so don't "
-    "rely on it there. Never emit a bare `type` for a cell and leave the commit "
-    "to a later action/turn — the characters concatenate into the one active "
-    "cell (10 then 20 → \"1020\").\n"
+    "GRID / SPREADSHEET DATA ENTRY (Excel, tables) — read these rules exactly:\n"
+    "  • Excel opens on a START SCREEN, not a grid. If you see a 'Blank workbook' "
+    "item, click it first; the grid (a `DataGrid \"Grid\"` of `DataItem` cells) "
+    "only appears once a workbook is open.\n"
+    "  • Cells appear in the tree as `DataItem` lines labelled by address, e.g. "
+    "`[N] DataItem \"A1\" [...]`. Click the FIRST target cell ONCE by its "
+    "element_index (the DataItem labelled \"A1\"). After that, each value you "
+    "type and commit with Enter moves the selection DOWN one row, so a column "
+    "fills itself top-to-bottom — you do NOT need to click every cell.\n"
+    "  • Then enter values one per action, in order, each as `type {value, "
+    "commit:'enter'}` (use commit:'tab' to move right instead). The commit is "
+    "PART OF the type action: never split it into a separate `key:'enter'` "
+    "action, never batch several cell values into one turn, and never end a turn "
+    "with a `type` that has no commit. A bare or trailing un-committed `type` "
+    "stays in the open cell and the NEXT value appends into it (10 then 20 → "
+    "\"2030\").\n"
+    "  • Walking down also places the SUM/AVERAGE formulas correctly: after the "
+    "last data value commits, the selection sits in the cell just below the data, "
+    "so `type {value:'=SUM(A1:A5)', commit:'enter'}` then "
+    "`type {value:'=AVERAGE(A1:A5)', commit:'enter'}` land in A6 then A7 — "
+    "OUTSIDE the summed range. Never type a SUM/AVERAGE into a cell inside its "
+    "own range; that raises a circular-reference dialog and the run stalls.\n"
+    "  • A committed cell shows its COMPUTED result in the tree as `DataItem "
+    "\"A6\" [value=\"150\"]` — that is how you confirm it worked.\n"
+    "  • A grid cell's element advertises a `set_value` action, but on Excel it "
+    "does NOT actually write to the sheet (it returns ok while the cell stays "
+    "empty). NEVER use set_value for grid cells — always `type` with a commit.\n"
     "VERIFY BEFORE DONE: only emit `done(success=true)` after the latest element "
-    "tree actually shows the goal met (e.g. each target cell holds its expected "
-    "value / computed result). If the scan doesn't confirm it, keep working or "
-    "emit `done(success=false, note=...)` — never claim success you can't see."
+    "tree actually shows the goal met — each target cell's `value=` holds its "
+    "expected value / computed result, and no cell is left mid-edit. If the scan "
+    "doesn't confirm it, keep working or emit `done(success=false, note=...)` — "
+    "never claim success you can't see."
 )
 
 SYSTEM_PROMPT_VISION = (
@@ -341,6 +361,15 @@ class ComputerSkill:
 
             # ACT
             actions = parsed.get("actions") or []
+            # Deterministic grid safety net (issue #21): cheap text models won't
+            # reliably use the atomic `commit` field — they emit `type` + a
+            # separate `key:enter` and leave the turn's last `type` un-committed,
+            # so the next value appends into the still-open cell (10,20 → "2030").
+            # In a spreadsheet window we coerce that sloppy shape back into the
+            # one recipe proven to work: one committed value per cell, walking
+            # down the column. See `_coerce_grid_typing`.
+            if path == "a11y" and self._is_grid(state):
+                actions = self._coerce_grid_typing(actions)
             outcomes, done_seen, success_seen, done_note = await self._apply(ctx, actions)
             outcome_str = " | ".join(outcomes) or "ok"
             steps.append({"turn": turn, "path": path,
@@ -370,6 +399,54 @@ class ComputerSkill:
                 # Otherwise keep driving — the next turn sees the rejection in
                 # history and can actually fix the state before claiming done.
         return steps, False, f"step cap reached ({max_steps})"
+
+    @staticmethod
+    def _is_grid(state: dict) -> bool:
+        """True when the scanned window is a spreadsheet grid — the context where
+        the cell-commit concatenation bug (issue #21) lives. Keyed off the UIA
+        `DataGrid` container Excel exposes for an open worksheet."""
+        return "DataGrid" in (state.get("tree_markdown") or "")
+
+    @staticmethod
+    def _is_enter(a: dict) -> bool:
+        """An action that is just an Enter keypress (in either `key` or `hotkey`
+        shape) — the redundant commit a model tacks on after a bare `type`."""
+        if a.get("type") not in ("key", "hotkey"):
+            return False
+        keys = a.get("keys")
+        val = (a.get("value") or (keys[0] if keys and len(keys) == 1 else "")) or ""
+        return str(val).lower() == "enter"
+
+    @classmethod
+    def _coerce_grid_typing(cls, actions: list[dict]) -> list[dict]:
+        """Rewrite a turn's actions so grid data entry can't concatenate, no
+        matter how the model phrased it. For each `type`:
+          • force `commit:'enter'` when no commit was given, so the cell is
+            committed in the SAME atomic action (the value can never sit in an
+            open cell waiting for the next type to append to it);
+          • drop a stray `element_index` / `x` / `y` the model guessed — typing
+            goes to the active cell, and Enter walks the selection down, which is
+            the proven recipe; a guessed cell index is usually wrong and can land
+            a SUM/AVERAGE inside its own range (circular reference);
+          • swallow a following bare Enter keypress so the now-atomic commit
+            isn't doubled (which would skip a row).
+        Non-`type` actions pass through untouched."""
+        out: list[dict] = []
+        skip_next_enter = False
+        for a in actions:
+            if a.get("type") == "type":
+                b = {k: v for k, v in a.items()
+                     if k not in ("element_index", "x", "y")}
+                b.setdefault("commit", "enter")
+                out.append(b)
+                skip_next_enter = b["commit"] == "enter"
+                continue
+            if skip_next_enter and cls._is_enter(a):
+                skip_next_enter = False
+                continue                      # redundant — the type already committed
+            skip_next_enter = False
+            out.append(a)
+        return out
 
     async def _apply(self, ctx, actions):
         """Dispatch a turn's actions through the tool registry. Stops at the first
@@ -478,7 +555,15 @@ class ComputerSkill:
             pass
 
     @staticmethod
-    def _trim(md: str, limit: int = 6000) -> str:
+    def _trim(md: str, limit: int = 24000) -> str:
+        # A rich app tree is large: Excel's open-workbook UIA tree is ~40 KB —
+        # ~10 KB of ribbon chrome before the grid even starts, then the cells.
+        # The old 6 KB cap truncated the ENTIRE grid away, so the driver only
+        # ever saw the ribbon (and clicked ribbon buttons thinking they were
+        # cells) and the verifier never saw any cell values (so every
+        # done(success=true) was rejected). 24 KB keeps the chrome plus the
+        # top-left working region where data + formulas live, which is what the
+        # model needs to address cells and confirm computed results.
         return md if len(md) <= limit else md[:limit] + "\n…[truncated]"
 
     @staticmethod
