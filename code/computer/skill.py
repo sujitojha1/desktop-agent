@@ -408,14 +408,20 @@ class ComputerSkill:
         return "DataGrid" in (state.get("tree_markdown") or "")
 
     @staticmethod
-    def _is_enter(a: dict) -> bool:
-        """An action that is just an Enter keypress (in either `key` or `hotkey`
-        shape) — the redundant commit a model tacks on after a bare `type`."""
+    def _key_name(a: dict) -> str:
+        """The single key a `key`/`hotkey` action resolves to (lowercased), or ''
+        when it carries none — the no-op shape a sloppy model sometimes emits."""
         if a.get("type") not in ("key", "hotkey"):
-            return False
+            return ""
         keys = a.get("keys")
         val = (a.get("value") or (keys[0] if keys and len(keys) == 1 else "")) or ""
-        return str(val).lower() == "enter"
+        return str(val).lower()
+
+    @classmethod
+    def _is_enter(cls, a: dict) -> bool:
+        """An action that is just an Enter keypress — the redundant commit a model
+        tacks on after a bare `type`."""
+        return cls._key_name(a) == "enter"
 
     @classmethod
     def _coerce_grid_typing(cls, actions: list[dict]) -> list[dict]:
@@ -429,7 +435,10 @@ class ComputerSkill:
             the proven recipe; a guessed cell index is usually wrong and can land
             a SUM/AVERAGE inside its own range (circular reference);
           • swallow a following bare Enter keypress so the now-atomic commit
-            isn't doubled (which would skip a row).
+            isn't doubled (which would skip a row);
+          • drop a degenerate `key`/`hotkey` action that carries no key name —
+            a sloppy model emits these, and `_apply` would otherwise treat the
+            error as a turn-aborting failure and strand the values after it.
         Non-`type` actions pass through untouched."""
         out: list[dict] = []
         skip_next_enter = False
@@ -441,6 +450,8 @@ class ComputerSkill:
                 out.append(b)
                 skip_next_enter = b["commit"] == "enter"
                 continue
+            if a.get("type") in ("key", "hotkey") and not cls._key_name(a):
+                continue                      # no-op key — would error and abort
             if skip_next_enter and cls._is_enter(a):
                 skip_next_enter = False
                 continue                      # redundant — the type already committed

@@ -381,6 +381,19 @@ def test_coerce_swallows_redundant_enter_after_type():
                    {"type": "type", "value": "30", "commit": "enter"}]
 
 
+def test_coerce_drops_degenerate_keyless_action():
+    # A `key` with no key name would error in _apply and abort the rest of the
+    # turn, stranding the value after it. In a grid turn it must be dropped so
+    # both typed values still execute.
+    out = ComputerSkill._coerce_grid_typing([
+        {"type": "type", "value": "20"},
+        {"type": "key", "keys": []},          # degenerate no-op the model emitted
+        {"type": "type", "value": "30"},
+    ])
+    assert out == [{"type": "type", "value": "20", "commit": "enter"},
+                   {"type": "type", "value": "30", "commit": "enter"}]
+
+
 def test_coerce_preserves_explicit_commit_and_nontype_actions():
     out = ComputerSkill._coerce_grid_typing([
         {"type": "click", "element_index": 127},
